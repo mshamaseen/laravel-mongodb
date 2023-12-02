@@ -5,6 +5,7 @@ namespace Jenssegers\Mongodb\Relations;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model as EloquentModel;
 use Illuminate\Database\Eloquent\Relations\HasMany as EloquentHasMany;
+use MongoDB\BSON\ObjectId;
 
 class HasMany extends EloquentHasMany
 {
@@ -48,5 +49,19 @@ class HasMany extends EloquentHasMany
     protected function whereInMethod(EloquentModel $model, $key)
     {
         return 'whereIn';
+    }
+
+    public function addConstraints(): void
+    {
+        if (static::$constraints) {
+            $query = $this->getRelationQuery();
+
+            // use ObjectId
+            $key = new ObjectId($this->getParentKey());
+
+            $query->where($this->foreignKey, '=', $key);
+
+            $query->whereNotNull($this->foreignKey);
+        }
     }
 }
