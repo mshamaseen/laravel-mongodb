@@ -58,7 +58,7 @@ class HasMany extends EloquentHasMany
             $query = $this->getRelationQuery();
 
             // use ObjectId
-            $key = $this instanceof Model ? new ObjectId($this->getParentKey()) : $this->getParentKey();
+            $key = $this->parent instanceof Model ? new ObjectId($this->getParentKey()) : $this->getParentKey();
 
             $query->where($this->foreignKey, '=', $key);
 
