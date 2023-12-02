@@ -5,6 +5,7 @@ namespace Jenssegers\Mongodb\Relations;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model as EloquentModel;
 use Illuminate\Database\Eloquent\Relations\HasMany as EloquentHasMany;
+use Jenssegers\Mongodb\Eloquent\Model;
 use MongoDB\BSON\ObjectId;
 
 class HasMany extends EloquentHasMany
@@ -57,7 +58,7 @@ class HasMany extends EloquentHasMany
             $query = $this->getRelationQuery();
 
             // use ObjectId
-            $key = new ObjectId($this->getParentKey());
+            $key = $this instanceof Model ? new ObjectId($this->getParentKey()) : $this->getParentKey();
 
             $query->where($this->foreignKey, '=', $key);
 
