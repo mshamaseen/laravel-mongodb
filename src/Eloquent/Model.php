@@ -284,6 +284,14 @@ abstract class Model extends BaseModel
             return true;
         }
 
+        // for some reason comparing ObjectID to another directly returns false
+        // maybe because there is an internal timestamp in objectId? so if you remade it, it will not match.
+        if($attribute instanceof ObjectID && $original instanceof ObjectID) {
+            if($attribute->jsonSerialize() === $original->jsonSerialize()) {
+                return true;
+            }
+        }
+
         if (null === $attribute) {
             return false;
         }
