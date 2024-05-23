@@ -616,12 +616,28 @@ class Builder extends BaseBuilder
     {
         // Use $set as default operator.
         if (! Str::startsWith(key($values), '$')) {
-            $values = ['$set' => $values];
+            $values = ['$set' => $this->convertValuesDateInterfaceToUtc($values)];
         }
 
         $options = $this->inheritConnectionOptions($options);
 
         return $this->performUpdate($values, $options);
+    }
+
+    function convertValuesDateInterfaceToUtc(array $values)
+    {
+        $newValues = $values;
+        foreach ($values as $key => $value) {
+            if(is_array($value)) {
+                $newValues[$key] = $this->convertValuesDateInterfaceToUtc($value);
+            }
+
+            if($value instanceof \DateTimeInterface) {
+                $newValues[$key] = new UTCDateTime($value);
+            }
+        }
+
+        return $newValues;
     }
 
     /**
