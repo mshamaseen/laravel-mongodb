@@ -56,7 +56,25 @@ documentation.
 Create an Atlas Search Index
 ----------------------------
 
-.. TODO in DOCSP-46230
+You can create an Atlas Search index in either of the following ways:
+
+- Call the ``create()`` method on the ``Schema`` facade and pass the
+  ``searchIndex()`` helper method with index creation details. To learn
+  more about this strategy, see the
+  :ref:`laravel-schema-builder-atlas-idx` section of the Schema Builder guide.
+  
+- Access a collection, then call the
+  :phpmethod:`createSearchIndex() <phpmethod.MongoDB\\Collection::createSearchIndex()>`
+  method from the {+php-library+}, as shown in the following code:
+  
+  .. code-block:: php
+     
+     $collection = DB::connection('mongodb')->getCollection('movies');
+     
+     $collection->createSearchIndex(
+         ['mappings' => ['dynamic' => true]], 
+         ['name' => 'search_index']
+     );
 
 Perform Queries
 ---------------
