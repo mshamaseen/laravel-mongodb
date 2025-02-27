@@ -219,7 +219,7 @@ methods in your application:
 Example
 ```````
 
-The following example accesses a database connection, then calls the
+The following example accesses the database of the connection, then calls the
 ``listCollections()`` query builder method to retrieve information about
 the collections in the database:
 
