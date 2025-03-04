@@ -5,10 +5,9 @@ declare(strict_types=1);
 namespace MongoDB\Laravel\Relations;
 
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany as EloquentHasMany;
-use MongoDB\Laravel\Eloquent\Model;
 use MongoDB\BSON\ObjectId;
+use MongoDB\Laravel\Eloquent\Model;
 
 /**
  * @template TRelatedModel of Model
