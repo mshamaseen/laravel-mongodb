@@ -1,13 +1,31 @@
 <?php
 
-namespace Jenssegers\Mongodb\Relations;
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Relations;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany as EloquentBelongsToMany;
 use Illuminate\Support\Arr;
+use MongoDB\Laravel\Eloquent\Model as DocumentModel;
 
+use function array_diff;
+use function array_keys;
+use function array_map;
+use function array_merge;
+use function array_values;
+use function assert;
+use function count;
+use function in_array;
+use function is_numeric;
+
+/**
+ * @template TRelatedModel of Model
+ * @template TDeclaringModel of Model
+ * @extends EloquentBelongsToMany<TRelatedModel, TDeclaringModel>
+ */
 class BelongsToMany extends EloquentBelongsToMany
 {
     /**
@@ -20,17 +38,13 @@ class BelongsToMany extends EloquentBelongsToMany
         return $this->getForeignKey();
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function getRelationExistenceQuery(Builder $query, Builder $parentQuery, $columns = ['*'])
     {
         return $query;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     protected function hydratePivotRelation(array $models)
     {
         // Do nothing.
@@ -39,7 +53,6 @@ class BelongsToMany extends EloquentBelongsToMany
     /**
      * Set the select clause for the relation query.
      *
-     * @param array $columns
      * @return array
      */
     protected function getSelectColumns(array $columns = ['*'])
@@ -47,17 +60,13 @@ class BelongsToMany extends EloquentBelongsToMany
         return $columns;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     protected function shouldSelect(array $columns = ['*'])
     {
         return $columns;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function addConstraints()
     {
         if (static::$constraints) {
@@ -74,26 +83,22 @@ class BelongsToMany extends EloquentBelongsToMany
     {
         $foreign = $this->getForeignKey();
 
-        $this->query->where($foreign, '=', $this->parent->getKey());
+        $this->query->where($foreign, '=', $this->parent->{$this->parentKey});
 
         return $this;
     }
 
-    /**
-     * @inheritdoc
-     */
-    public function save(Model $model, array $joining = [], $touch = true)
+    /** @inheritdoc */
+    public function save(Model $model, array $pivotAttributes = [], $touch = true)
     {
         $model->save(['touch' => false]);
 
-        $this->attach($model, $joining, $touch);
+        $this->attach($model, $pivotAttributes, $touch);
 
         return $model;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function create(array $attributes = [], array $joining = [], $touch = true)
     {
         $instance = $this->related->newInstance($attributes);
@@ -108,9 +113,7 @@ class BelongsToMany extends EloquentBelongsToMany
         return $instance;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function sync($ids, $detaching = true)
     {
         $changes = [
@@ -120,20 +123,24 @@ class BelongsToMany extends EloquentBelongsToMany
         ];
 
         if ($ids instanceof Collection) {
-            $ids = $ids->modelKeys();
+            $ids = $this->parseIds($ids);
+        } elseif ($ids instanceof Model) {
+            $ids = $this->parseIds($ids);
         }
 
         // First we need to attach any of the associated models that are not currently
         // in this joining table. We'll spin through the given IDs, checking to see
         // if they exist in the array of current ones, and if not we will insert.
-        $current = $this->parent->{$this->getRelatedKey()} ?: [];
+        $current = match (\MongoDB\Laravel\Eloquent\Model::isDocumentModel($this->parent)) {
+            true => $this->parent->{$this->relatedPivotKey} ?: [],
+            false => $this->parent->{$this->relationName} ?: [],
+        };
 
-        // See issue #256.
         if ($current instanceof Collection) {
-            $current = $ids->modelKeys();
+            $current = $this->parseIds($current);
         }
 
-        $records = $this->formatSyncList($ids);
+        $records = $this->formatRecordsList($ids);
 
         $current = Arr::wrap($current);
 
@@ -158,7 +165,8 @@ class BelongsToMany extends EloquentBelongsToMany
         // touching until after the entire operation is complete so we don't fire a
         // ton of touch operations until we are totally done syncing the records.
         $changes = array_merge(
-            $changes, $this->attachNew($records, $current, false)
+            $changes,
+            $this->attachNew($records, $current, false),
         );
 
         if (count($changes['attached']) || count($changes['updated'])) {
@@ -168,54 +176,58 @@ class BelongsToMany extends EloquentBelongsToMany
         return $changes;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function updateExistingPivot($id, array $attributes, $touch = true)
     {
         // Do nothing, we have no pivot table.
+        return $this;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function attach($id, array $attributes = [], $touch = true)
     {
         if ($id instanceof Model) {
             $model = $id;
 
-            $id = $model->getKey();
+            $id = $this->parseId($model);
 
             // Attach the new parent id to the related model.
-            $model->push($this->foreignPivotKey, $this->parent->getKey(), true);
+            $model->push($this->foreignPivotKey, $this->parent->{$this->parentKey}, true);
         } else {
             if ($id instanceof Collection) {
-                $id = $id->modelKeys();
+                $id = $this->parseIds($id);
             }
 
             $query = $this->newRelatedQuery();
 
-            $query->whereIn($this->related->getKeyName(), (array) $id);
+            $query->whereIn($this->relatedKey, (array) $id);
 
             // Attach the new parent id to the related model.
-            $query->push($this->foreignPivotKey, $this->parent->getKey(), true);
+            $query->push($this->foreignPivotKey, $this->parent->{$this->parentKey}, true);
         }
 
         // Attach the new ids to the parent model.
-        $this->parent->push($this->getRelatedKey(), (array) $id, true);
-
-        if ($touch) {
-            $this->touchIfTouching();
+        if (\MongoDB\Laravel\Eloquent\Model::isDocumentModel($this->parent)) {
+            $this->parent->push($this->relatedPivotKey, (array) $id, true);
+        } else {
+            $instance = new $this->related();
+            $instance->forceFill([$this->relatedKey => $id]);
+            $relationData = $this->parent->{$this->relationName}->push($instance)->unique($this->relatedKey);
+            $this->parent->setRelation($this->relationName, $relationData);
         }
+
+        if (! $touch) {
+            return;
+        }
+
+        $this->touchIfTouching();
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function detach($ids = [], $touch = true)
     {
         if ($ids instanceof Model) {
-            $ids = (array) $ids->getKey();
+            $ids = $this->parseIds($ids);
         }
 
         $query = $this->newRelatedQuery();
@@ -226,15 +238,23 @@ class BelongsToMany extends EloquentBelongsToMany
         $ids = (array) $ids;
 
         // Detach all ids from the parent model.
-        $this->parent->pull($this->getRelatedKey(), $ids);
+        if (DocumentModel::isDocumentModel($this->parent)) {
+            $this->parent->pull($this->relatedPivotKey, $ids);
+        } else {
+            $value = $this->parent->{$this->relationName}
+                ->filter(fn ($rel) => ! in_array($rel->{$this->relatedKey}, $ids));
+            $this->parent->setRelation($this->relationName, $value);
+        }
 
         // Prepare the query to select all related objects.
         if (count($ids) > 0) {
-            $query->whereIn($this->related->getKeyName(), $ids);
+            $query->whereIn($this->relatedKey, $ids);
         }
 
         // Remove the relation to the parent.
-        $query->pull($this->foreignPivotKey, $this->parent->getKey());
+        assert($this->parent instanceof Model);
+        assert($query instanceof \MongoDB\Laravel\Eloquent\Builder);
+        $query->pull($this->foreignPivotKey, $this->parent->{$this->parentKey});
 
         if ($touch) {
             $this->touchIfTouching();
@@ -243,9 +263,7 @@ class BelongsToMany extends EloquentBelongsToMany
         return count($ids);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     protected function buildDictionary(Collection $results)
     {
         $foreign = $this->foreignPivotKey;
@@ -264,9 +282,7 @@ class BelongsToMany extends EloquentBelongsToMany
         return $dictionary;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function newPivotQuery()
     {
         return $this->newRelatedQuery();
@@ -275,7 +291,7 @@ class BelongsToMany extends EloquentBelongsToMany
     /**
      * Create a new query builder for the related model.
      *
-     * @return \Illuminate\Database\Query\Builder
+     * @return Builder|Model
      */
     public function newRelatedQuery()
     {
@@ -292,58 +308,23 @@ class BelongsToMany extends EloquentBelongsToMany
         return $this->foreignPivotKey;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function getQualifiedForeignPivotKeyName()
     {
         return $this->foreignPivotKey;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function getQualifiedRelatedPivotKeyName()
     {
         return $this->relatedPivotKey;
     }
 
     /**
-     * Format the sync list so that it is keyed by ID. (Legacy Support)
-     * The original function has been renamed to formatRecordsList since Laravel 5.3.
-     *
-     * @param array $records
-     * @return array
-     * @deprecated
-     */
-    protected function formatSyncList(array $records)
-    {
-        $results = [];
-        foreach ($records as $id => $attributes) {
-            if (! is_array($attributes)) {
-                [$id, $attributes] = [$attributes, []];
-            }
-            $results[$id] = $attributes;
-        }
-
-        return $results;
-    }
-
-    /**
-     * Get the related key with backwards compatible support.
-     *
-     * @return string
-     */
-    public function getRelatedKey()
-    {
-        return property_exists($this, 'relatedPivotKey') ? $this->relatedPivotKey : $this->relatedKey;
-    }
-
-    /**
      * Get the name of the "where in" method for eager loading.
      *
-     * @param \Illuminate\Database\Eloquent\Model $model
      * @param string $key
+     *
      * @return string
      */
     protected function whereInMethod(Model $model, $key)

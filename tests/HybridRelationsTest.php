@@ -2,7 +2,20 @@
 
 declare(strict_types=1);
 
-use Illuminate\Database\MySqlConnection;
+namespace MongoDB\Laravel\Tests;
+
+use Illuminate\Database\SQLiteConnection;
+use Illuminate\Support\Facades\DB;
+use MongoDB\Laravel\Tests\Models\Book;
+use MongoDB\Laravel\Tests\Models\Experience;
+use MongoDB\Laravel\Tests\Models\Label;
+use MongoDB\Laravel\Tests\Models\Role;
+use MongoDB\Laravel\Tests\Models\Skill;
+use MongoDB\Laravel\Tests\Models\SqlBook;
+use MongoDB\Laravel\Tests\Models\SqlRole;
+use MongoDB\Laravel\Tests\Models\SqlUser;
+use MongoDB\Laravel\Tests\Models\User;
+use PDOException;
 
 class HybridRelationsTest extends TestCase
 {
@@ -10,37 +23,36 @@ class HybridRelationsTest extends TestCase
     {
         parent::setUp();
 
-        MysqlUser::executeSchema();
-        MysqlBook::executeSchema();
-        MysqlRole::executeSchema();
-//        MysqlGroup::executeSchema();
+        try {
+            DB::connection('sqlite')->select('SELECT 1');
+        } catch (PDOException) {
+            $this->markTestSkipped('SQLite connection is not available.');
+        }
+
+        SqlUser::executeSchema();
+        SqlBook::executeSchema();
+        SqlRole::executeSchema();
     }
 
     public function tearDown(): void
     {
-        MysqlUser::truncate();
-        MysqlBook::truncate();
-        MysqlRole::truncate();
-//        MysqlGroup::truncate();
+        SqlUser::truncate();
+        SqlBook::truncate();
+        SqlRole::truncate();
+        Skill::truncate();
+        Experience::truncate();
+        Label::truncate();
+
+        parent::tearDown();
     }
 
-//    public function testMysqlGroups()
-//    {
-//        $user = new MysqlUser;
-//        $user->name = 'John Doe';
-//        $user->save();
-//        $this->assertIsInt($user->id);
-//
-//        $group = $user->groups()->create(['name' => 'test']);
-//    }
-
-    public function testMysqlRelations()
+    public function testSqlRelations()
     {
-        $user = new MysqlUser;
-        $this->assertInstanceOf(MysqlUser::class, $user);
-        $this->assertInstanceOf(MySqlConnection::class, $user->getConnection());
+        $user = new SqlUser();
+        $this->assertInstanceOf(SqlUser::class, $user);
+        $this->assertInstanceOf(SQLiteConnection::class, $user->getConnection());
 
-        // Mysql User
+        // SQL User
         $user->name = 'John Doe';
         $user->save();
         $this->assertIsInt($user->id);
@@ -48,65 +60,65 @@ class HybridRelationsTest extends TestCase
         // SQL has many
         $book = new Book(['title' => 'Game of Thrones']);
         $user->books()->save($book);
-        $user = MysqlUser::find($user->id); // refetch
+        $user = SqlUser::find($user->id); // refetch
         $this->assertCount(1, $user->books);
 
         // MongoDB belongs to
         $book = $user->books()->first(); // refetch
-        $this->assertEquals('John Doe', $book->mysqlAuthor->name);
+        $this->assertEquals('John Doe', $book->sqlAuthor->name);
 
         // SQL has one
         $role = new Role(['type' => 'admin']);
         $user->role()->save($role);
-        $user = MysqlUser::find($user->id); // refetch
+        $user = SqlUser::find($user->id); // refetch
         $this->assertEquals('admin', $user->role->type);
 
         // MongoDB belongs to
         $role = $user->role()->first(); // refetch
-        $this->assertEquals('John Doe', $role->mysqlUser->name);
+        $this->assertEquals('John Doe', $role->sqlUser->name);
 
         // MongoDB User
-        $user = new User;
+        $user       = new User();
         $user->name = 'John Doe';
         $user->save();
 
         // MongoDB has many
-        $book = new MysqlBook(['title' => 'Game of Thrones']);
-        $user->mysqlBooks()->save($book);
-        $user = User::find($user->_id); // refetch
-        $this->assertCount(1, $user->mysqlBooks);
+        $book = new SqlBook(['title' => 'Game of Thrones']);
+        $user->sqlBooks()->save($book);
+        $user = User::find($user->id); // refetch
+        $this->assertCount(1, $user->sqlBooks);
 
         // SQL belongs to
-        $book = $user->mysqlBooks()->first(); // refetch
+        $book = $user->sqlBooks()->first(); // refetch
         $this->assertEquals('John Doe', $book->author->name);
 
         // MongoDB has one
-        $role = new MysqlRole(['type' => 'admin']);
-        $user->mysqlRole()->save($role);
-        $user = User::find($user->_id); // refetch
-        $this->assertEquals('admin', $user->mysqlRole->type);
+        $role = new SqlRole(['type' => 'admin']);
+        $user->sqlRole()->save($role);
+        $user = User::find($user->id); // refetch
+        $this->assertEquals('admin', $user->sqlRole->type);
 
         // SQL belongs to
-        $role = $user->mysqlRole()->first(); // refetch
+        $role = $user->sqlRole()->first(); // refetch
         $this->assertEquals('John Doe', $role->user->name);
     }
 
     public function testHybridWhereHas()
     {
-        $user = new MysqlUser;
-        $otherUser = new MysqlUser;
-        $this->assertInstanceOf(MysqlUser::class, $user);
-        $this->assertInstanceOf(MySqlConnection::class, $user->getConnection());
-        $this->assertInstanceOf(MysqlUser::class, $otherUser);
-        $this->assertInstanceOf(MySqlConnection::class, $otherUser->getConnection());
+        $user      = new SqlUser();
+        $otherUser = new SqlUser();
+        $this->assertInstanceOf(SqlUser::class, $user);
+        $this->assertInstanceOf(SQLiteConnection::class, $user->getConnection());
+        $this->assertInstanceOf(SqlUser::class, $otherUser);
+        $this->assertInstanceOf(SQLiteConnection::class, $otherUser->getConnection());
 
-        //MySql User
+        // SQL User
         $user->name = 'John Doe';
-        $user->id = 2;
+        $user->id   = 2;
         $user->save();
         // Other user
         $otherUser->name = 'Other User';
-        $otherUser->id = 3;
+        $otherUser->id   = 3;
         $otherUser->save();
         // Make sure they are created
         $this->assertIsInt($user->id);
@@ -126,19 +138,19 @@ class HybridRelationsTest extends TestCase
             new Book(['title' => 'Harry Planter']),
         ]);
 
-        $users = MysqlUser::whereHas('books', function ($query) {
+        $users = SqlUser::whereHas('books', function ($query) {
             return $query->where('title', 'LIKE', 'Har%');
         })->get();
 
         $this->assertEquals(2, $users->count());
 
-        $users = MysqlUser::whereHas('books', function ($query) {
+        $users = SqlUser::whereHas('books', function ($query) {
             return $query->where('title', 'LIKE', 'Harry%');
         }, '>=', 2)->get();
 
         $this->assertEquals(1, $users->count());
 
-        $books = Book::whereHas('mysqlAuthor', function ($query) {
+        $books = Book::whereHas('sqlAuthor', function ($query) {
             return $query->where('name', 'LIKE', 'Other%');
         })->get();
 
@@ -147,38 +159,38 @@ class HybridRelationsTest extends TestCase
 
     public function testHybridWith()
     {
-        $user = new MysqlUser;
-        $otherUser = new MysqlUser;
-        $this->assertInstanceOf(MysqlUser::class, $user);
-        $this->assertInstanceOf(MySqlConnection::class, $user->getConnection());
-        $this->assertInstanceOf(MysqlUser::class, $otherUser);
-        $this->assertInstanceOf(MySqlConnection::class, $otherUser->getConnection());
+        $user      = new SqlUser();
+        $otherUser = new SqlUser();
+        $this->assertInstanceOf(SqlUser::class, $user);
+        $this->assertInstanceOf(SQLiteConnection::class, $user->getConnection());
+        $this->assertInstanceOf(SqlUser::class, $otherUser);
+        $this->assertInstanceOf(SQLiteConnection::class, $otherUser->getConnection());
 
-        //MySql User
+        // SQL User
         $user->name = 'John Doe';
-        $user->id = 2;
+        $user->id   = 2;
         $user->save();
         // Other user
         $otherUser->name = 'Other User';
-        $otherUser->id = 3;
+        $otherUser->id   = 3;
         $otherUser->save();
         // Make sure they are created
         $this->assertIsInt($user->id);
         $this->assertIsInt($otherUser->id);
         // Clear to start
         Book::truncate();
-        MysqlBook::truncate();
+        SqlBook::truncate();
         // Create books
-        // Mysql relation
-        $user->mysqlBooks()->saveMany([
-            new MysqlBook(['title' => 'Game of Thrones']),
-            new MysqlBook(['title' => 'Harry Potter']),
+        // SQL relation
+        $user->sqlBooks()->saveMany([
+            new SqlBook(['title' => 'Game of Thrones']),
+            new SqlBook(['title' => 'Harry Potter']),
         ]);
 
-        $otherUser->mysqlBooks()->saveMany([
-            new MysqlBook(['title' => 'Harry Plants']),
-            new MysqlBook(['title' => 'Harveys']),
-            new MysqlBook(['title' => 'Harry Planter']),
+        $otherUser->sqlBooks()->saveMany([
+            new SqlBook(['title' => 'Harry Plants']),
+            new SqlBook(['title' => 'Harveys']),
+            new SqlBook(['title' => 'Harry Planter']),
         ]);
         // SQL has many Hybrid
         $user->books()->saveMany([
@@ -192,12 +204,12 @@ class HybridRelationsTest extends TestCase
             new Book(['title' => 'Harry Planter']),
         ]);
 
-        MysqlUser::with('books')->get()
+        SqlUser::with('books')->get()
             ->each(function ($user) {
                 $this->assertEquals($user->id, $user->books->count());
             });
 
-        MysqlUser::whereHas('mysqlBooks', function ($query) {
+        SqlUser::whereHas('sqlBooks', function ($query) {
             return $query->where('title', 'LIKE', 'Harry%');
         })
             ->with('books')
@@ -205,5 +217,156 @@ class HybridRelationsTest extends TestCase
             ->each(function ($user) {
                 $this->assertEquals($user->id, $user->books->count());
             });
+    }
+
+    public function testHybridBelongsToMany()
+    {
+        $user = new SqlUser();
+        $user2 = new SqlUser();
+        $this->assertInstanceOf(SqlUser::class, $user);
+        $this->assertInstanceOf(SQLiteConnection::class, $user->getConnection());
+        $this->assertInstanceOf(SqlUser::class, $user2);
+        $this->assertInstanceOf(SQLiteConnection::class, $user2->getConnection());
+
+        // Create Mysql Users
+        $user->fill(['name' => 'John Doe'])->save();
+        $user = SqlUser::query()->find($user->id);
+
+        $user2->fill(['name' => 'Maria Doe'])->save();
+        $user2 = SqlUser::query()->find($user2->id);
+
+        // Create Mongodb Skills
+        $skill = Skill::query()->create(['name' => 'Laravel']);
+        $skill2 = Skill::query()->create(['name' => 'MongoDB']);
+
+        // sync (pivot is empty)
+        $skill->sqlUsers()->sync([$user->id, $user2->id]);
+        $check = Skill::query()->find($skill->id);
+        $this->assertEquals(2, $check->sqlUsers->count());
+
+        // sync (pivot is not empty)
+        $skill->sqlUsers()->sync($user);
+        $check = Skill::query()->find($skill->id);
+        $this->assertEquals(1, $check->sqlUsers->count());
+
+        // Inverse sync (pivot is empty)
+        $user->skills()->sync([$skill->id, $skill2->id]);
+        $check = SqlUser::find($user->id);
+        $this->assertEquals(2, $check->skills->count());
+
+        // Inverse sync (pivot is not empty)
+        $user->skills()->sync($skill);
+        $check = SqlUser::find($user->id);
+        $this->assertEquals(1, $check->skills->count());
+
+        // Inverse attach
+        $user->skills()->sync([]);
+        $check = SqlUser::find($user->id);
+        $this->assertEquals(0, $check->skills->count());
+        $user->skills()->attach($skill);
+        $check = SqlUser::find($user->id);
+        $this->assertEquals(1, $check->skills->count());
+    }
+
+    public function testHybridMorphToManySqlModelToMongoModel()
+    {
+        // SqlModel -> MorphToMany -> MongoModel
+        $user      = new SqlUser();
+        $user2 = new SqlUser();
+        $this->assertInstanceOf(SqlUser::class, $user);
+        $this->assertInstanceOf(SQLiteConnection::class, $user->getConnection());
+        $this->assertInstanceOf(SqlUser::class, $user2);
+        $this->assertInstanceOf(SQLiteConnection::class, $user2->getConnection());
+
+        // Create Mysql Users
+        $user->fill(['name' => 'John Doe'])->save();
+        $user = SqlUser::query()->find($user->id);
+
+        $user2->fill(['name' => 'Maria Doe'])->save();
+        $user2 = SqlUser::query()->find($user2->id);
+
+        // Create Mongodb skills
+        $label = Label::query()->create(['name' => 'Laravel']);
+        $label2 = Label::query()->create(['name' => 'MongoDB']);
+
+        // MorphToMany (pivot is empty)
+        $user->labels()->sync([$label->id, $label2->id]);
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(2, $check->labels->count());
+
+        // MorphToMany (pivot is not empty)
+        $user->labels()->sync($label);
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(1, $check->labels->count());
+
+        // Attach MorphToMany
+        $user->labels()->sync([]);
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(0, $check->labels->count());
+        $user->labels()->attach($label);
+        $user->labels()->attach($label); // ignore duplicates
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(1, $check->labels->count());
+
+        // Inverse MorphToMany (pivot is empty)
+        $label->sqlUsers()->sync([$user->id, $user2->id]);
+        $check = Label::query()->find($label->id);
+        $this->assertEquals(2, $check->sqlUsers->count());
+
+        // Inverse MorphToMany (pivot is empty)
+        $label->sqlUsers()->sync([$user->id, $user2->id]);
+        $check = Label::query()->find($label->id);
+        $this->assertEquals(2, $check->sqlUsers->count());
+    }
+
+    public function testHybridMorphToManyMongoModelToSqlModel()
+    {
+        // MongoModel -> MorphToMany -> SqlModel
+        $user      = new SqlUser();
+        $user2 = new SqlUser();
+        $this->assertInstanceOf(SqlUser::class, $user);
+        $this->assertInstanceOf(SQLiteConnection::class, $user->getConnection());
+        $this->assertInstanceOf(SqlUser::class, $user2);
+        $this->assertInstanceOf(SQLiteConnection::class, $user2->getConnection());
+
+        // Create Mysql Users
+        $user->fill(['name' => 'John Doe'])->save();
+        $user = SqlUser::query()->find($user->id);
+
+        $user2->fill(['name' => 'Maria Doe'])->save();
+        $user2 = SqlUser::query()->find($user2->id);
+
+        // Create Mongodb experiences
+        $experience = Experience::query()->create(['title' => 'DB expert']);
+        $experience2 = Experience::query()->create(['title' => 'MongoDB']);
+
+        // MorphToMany (pivot is empty)
+        $experience->sqlUsers()->sync([$user->id, $user2->id]);
+        $check = Experience::query()->find($experience->id);
+        $this->assertEquals(2, $check->sqlUsers->count());
+
+        // MorphToMany (pivot is not empty)
+        $experience->sqlUsers()->sync([$user->id]);
+        $check = Experience::query()->find($experience->id);
+        $this->assertEquals(1, $check->sqlUsers->count());
+
+        // Inverse MorphToMany (pivot is empty)
+        $user->experiences()->sync([$experience->id, $experience2->id]);
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(2, $check->experiences->count());
+
+        // Inverse MorphToMany (pivot is not empty)
+        $user->experiences()->sync([$experience->id]);
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(1, $check->experiences->count());
+
+        // Inverse MorphToMany (pivot is not empty)
+        $user->experiences()->sync([]);
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(0, $check->experiences->count());
+        $user->experiences()->attach($experience);
+        $user->experiences()->attach($experience); // ignore duplicates
+        $check = SqlUser::query()->find($user->id);
+        $this->assertEquals(1, $check->experiences->count());
     }
 }

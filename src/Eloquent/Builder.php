@@ -1,21 +1,37 @@
 <?php
 
-namespace Jenssegers\Mongodb\Eloquent;
+declare(strict_types=1);
 
-use Carbon\Carbon;
+namespace MongoDB\Laravel\Eloquent;
+
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
-use Illuminate\Database\Query\Expression;
-use Illuminate\Pagination\CursorPaginator;
-use Illuminate\Pagination\Paginator;
-use Illuminate\Support\Str;
-use Jenssegers\Mongodb\Helpers\QueriesRelationships;
-use MongoDB\BSON\UTCDateTime;
-use MongoDB\Driver\Cursor;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
+use MongoDB\BSON\Document;
+use MongoDB\Builder\Type\QueryInterface;
+use MongoDB\Builder\Type\SearchOperatorInterface;
+use MongoDB\Driver\CursorInterface;
+use MongoDB\Driver\Exception\WriteException;
+use MongoDB\Laravel\Connection;
+use MongoDB\Laravel\Helpers\QueriesRelationships;
+use MongoDB\Laravel\Query\AggregationBuilder;
 use MongoDB\Model\BSONDocument;
-use Illuminate\Pagination\Cursor as PaginationCursor;
 
+use function array_key_exists;
+use function array_merge;
+use function collect;
+use function is_array;
+use function is_object;
+use function iterator_to_array;
+use function property_exists;
+
+/**
+ * @method \MongoDB\Laravel\Query\Builder toBase()
+ * @template TModel of Model
+ */
 class Builder extends EloquentBuilder
 {
+    private const DUPLICATE_KEY_ERROR = 11000;
     use QueriesRelationships;
 
     /**
@@ -28,34 +44,93 @@ class Builder extends EloquentBuilder
         'avg',
         'count',
         'dd',
-        'doesntExist',
+        'doesntexist',
         'dump',
         'exists',
-        'getBindings',
-        'getConnection',
-        'getGrammar',
+        'getbindings',
+        'getconnection',
+        'getgrammar',
         'insert',
-        'insertGetId',
-        'insertOrIgnore',
-        'insertUsing',
+        'insertgetid',
+        'insertorignore',
+        'insertusing',
         'max',
         'min',
+        'autocomplete',
         'pluck',
         'pull',
         'push',
         'raw',
         'sum',
-        'toSql',
+        'tomql',
     ];
 
     /**
+     * @return ($function is null ? AggregationBuilder : self)
+     *
      * @inheritdoc
      */
+    public function aggregate($function = null, $columns = ['*'])
+    {
+        $result = $this->toBase()->aggregate($function, $columns);
+
+        return $result ?: $this;
+    }
+
+    /**
+     * Performs a full-text search of the field or fields in an Atlas collection.
+     *
+     * @see https://www.mongodb.com/docs/atlas/atlas-search/aggregation-stages/search/
+     *
+     * @return Collection<int, TModel>
+     */
+    public function search(
+        SearchOperatorInterface|array $operator,
+        ?string $index = null,
+        ?array $highlight = null,
+        ?bool $concurrent = null,
+        ?string $count = null,
+        ?string $searchAfter = null,
+        ?string $searchBefore = null,
+        ?bool $scoreDetails = null,
+        ?array $sort = null,
+        ?bool $returnStoredSource = null,
+        ?array $tracking = null,
+    ): Collection {
+        $results = $this->toBase()->search($operator, $index, $highlight, $concurrent, $count, $searchAfter, $searchBefore, $scoreDetails, $sort, $returnStoredSource, $tracking);
+
+        return $this->model->hydrate($results->all());
+    }
+
+    /**
+     * Performs a semantic search on data in your Atlas Vector Search index.
+     * NOTE: $vectorSearch is only available for MongoDB Atlas clusters, and is not available for self-managed deployments.
+     *
+     * @see https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-stage/
+     *
+     * @return Collection<int, TModel>
+     */
+    public function vectorSearch(
+        string $index,
+        string $path,
+        array $queryVector,
+        int $limit,
+        bool $exact = false,
+        QueryInterface|array $filter = [],
+        int|null $numCandidates = null,
+    ): Collection {
+        $results = $this->toBase()->vectorSearch($index, $path, $queryVector, $limit, $exact, $filter, $numCandidates);
+
+        return $this->model->hydrate($results->all());
+    }
+
+    /** @inheritdoc */
     public function update(array $values, array $options = [])
     {
         // Intercept operations on embedded models and delegate logic
         // to the parent relation instance.
-        if ($relation = $this->model->getParentRelation()) {
+        $relation = $this->model->getParentRelation();
+        if ($relation) {
             $relation->performUpdate($this->model, $values);
 
             return 1;
@@ -64,14 +139,13 @@ class Builder extends EloquentBuilder
         return $this->toBase()->update($this->addUpdatedAtColumn($values), $options);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function insert(array $values)
     {
         // Intercept operations on embedded models and delegate logic
         // to the parent relation instance.
-        if ($relation = $this->model->getParentRelation()) {
+        $relation = $this->model->getParentRelation();
+        if ($relation) {
             $relation->performInsert($this->model, $values);
 
             return true;
@@ -80,14 +154,13 @@ class Builder extends EloquentBuilder
         return parent::insert($values);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function insertGetId(array $values, $sequence = null)
     {
         // Intercept operations on embedded models and delegate logic
         // to the parent relation instance.
-        if ($relation = $this->model->getParentRelation()) {
+        $relation = $this->model->getParentRelation();
+        if ($relation) {
             $relation->performInsert($this->model, $values);
 
             return $this->model->getKey();
@@ -96,14 +169,13 @@ class Builder extends EloquentBuilder
         return parent::insertGetId($values, $sequence);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function delete()
     {
         // Intercept operations on embedded models and delegate logic
         // to the parent relation instance.
-        if ($relation = $this->model->getParentRelation()) {
+        $relation = $this->model->getParentRelation();
+        if ($relation) {
             $relation->performDelete($this->model);
 
             return $this->model->getKey();
@@ -112,14 +184,13 @@ class Builder extends EloquentBuilder
         return parent::delete();
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function increment($column, $amount = 1, array $extra = [])
     {
         // Intercept operations on embedded models and delegate logic
         // to the parent relation instance.
-        if ($relation = $this->model->getParentRelation()) {
+        $relation = $this->model->getParentRelation();
+        if ($relation) {
             $value = $this->model->{$column};
 
             // When doing increment and decrements, Eloquent will automatically
@@ -129,22 +200,19 @@ class Builder extends EloquentBuilder
 
             $this->model->syncOriginalAttribute($column);
 
-            $result = $this->model->update([$column => $value]);
-
-            return $result;
+            return $this->model->update([$column => $value]);
         }
 
         return parent::increment($column, $amount, $extra);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function decrement($column, $amount = 1, array $extra = [])
     {
         // Intercept operations on embedded models and delegate logic
         // to the parent relation instance.
-        if ($relation = $this->model->getParentRelation()) {
+        $relation = $this->model->getParentRelation();
+        if ($relation) {
             $value = $this->model->{$column};
 
             // When doing increment and decrements, Eloquent will automatically
@@ -160,47 +228,78 @@ class Builder extends EloquentBuilder
         return parent::decrement($column, $amount, $extra);
     }
 
-    /**
-     * @inheritdoc
-     */
-    public function chunkById($count, callable $callback, $column = '_id', $alias = null)
-    {
-        return parent::chunkById($count, $callback, $column, $alias);
-    }
-
-    /**
-     * @inheritdoc
-     */
-    public function raw($expression = null)
+    /** @inheritdoc */
+    public function raw($value = null)
     {
         // Get raw results from the query builder.
-        $results = $this->query->raw($expression);
+        $results = $this->query->raw($value);
 
         // Convert MongoCursor results to a collection of models.
-        if ($results instanceof Cursor) {
-            $results = iterator_to_array($results, false);
+        if ($results instanceof CursorInterface) {
+            $results->setTypeMap(['root' => 'array', 'document' => 'array', 'array' => 'array']);
+            $results = $this->query->aliasIdForResult(iterator_to_array($results));
 
             return $this->model->hydrate($results);
-        } // Convert MongoDB BSONDocument to a single object.
-        elseif ($results instanceof BSONDocument) {
-            $results = $results->getArrayCopy();
+        }
 
-            return $this->model->newFromBuilder((array) $results);
-        } // The result is a single object.
-        elseif (is_array($results) && array_key_exists('_id', $results)) {
-            return $this->model->newFromBuilder((array) $results);
+        // Convert MongoDB Document to a single object.
+        if (is_object($results) && (property_exists($results, '_id') || property_exists($results, 'id'))) {
+            $results = (array) match (true) {
+                $results instanceof BSONDocument => $results->getArrayCopy(),
+                $results instanceof Document => $results->toPHP(['root' => 'array', 'document' => 'array', 'array' => 'array']),
+                default => $results,
+            };
+        }
+
+        // The result is a single object.
+        if (is_array($results) && (array_key_exists('_id', $results) || array_key_exists('id', $results))) {
+            $results = $this->query->aliasIdForResult($results);
+
+            return $this->model->newFromBuilder($results);
         }
 
         return $results;
     }
 
+    public function firstOrCreate(array $attributes = [], array $values = [])
+    {
+        $instance = (clone $this)->where($attributes)->first();
+        if ($instance !== null) {
+            return $instance;
+        }
+
+        // createOrFirst is not supported in transaction.
+        if ($this->getConnection()->getSession()?->isInTransaction()) {
+            return $this->create(array_merge($attributes, $values));
+        }
+
+        return $this->createOrFirst($attributes, $values);
+    }
+
+    public function createOrFirst(array $attributes = [], array $values = [])
+    {
+        // The duplicate key error would abort the transaction. Using the regular firstOrCreate in that case.
+        if ($this->getConnection()->getSession()?->isInTransaction()) {
+            return $this->firstOrCreate($attributes, $values);
+        }
+
+        try {
+            return $this->create(array_merge($attributes, $values));
+        } catch (WriteException $e) {
+            if ($e->getCode() === self::DUPLICATE_KEY_ERROR) {
+                return $this->where($attributes)->first() ?? throw $e;
+            }
+
+            throw $e;
+        }
+    }
+
     /**
      * Add the "updated at" column to an array of values.
      * TODO Remove if https://github.com/laravel/framework/commit/6484744326531829341e1ff886cc9b628b20d73e
-     * wiil be reverted
-     * Issue in laravel frawework https://github.com/laravel/framework/issues/27791.
+     * will be reverted
+     * Issue in laravel/frawework https://github.com/laravel/framework/issues/27791.
      *
-     * @param  array  $values
      * @return array
      */
     protected function addUpdatedAtColumn(array $values)
@@ -212,23 +311,18 @@ class Builder extends EloquentBuilder
         $column = $this->model->getUpdatedAtColumn();
         $values = array_merge(
             [$column => $this->model->freshTimestampString()],
-            $values
+            $values,
         );
 
         return $values;
     }
 
-    /**
-     * @return \Illuminate\Database\ConnectionInterface
-     */
-    public function getConnection()
+    public function getConnection(): Connection
     {
         return $this->query->getConnection();
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     protected function ensureOrderForCursorPagination($shouldReverse = false)
     {
         if (empty($this->query->orders)) {
@@ -236,113 +330,15 @@ class Builder extends EloquentBuilder
         }
 
         if ($shouldReverse) {
-            $this->query->orders = collect($this->query->orders)->map(function ($direction) {
-                return $direction === 1 ? -1 : 1;
-            })->toArray();
+            $this->query->orders = collect($this->query->orders)
+                ->map(static fn (int $direction) => $direction === 1 ? -1 : 1)
+                ->toArray();
         }
 
-        return collect($this->query->orders)->map(function ($direction, $column) {
-            return [
+        return collect($this->query->orders)
+            ->map(static fn ($direction, $column) => [
                 'column' => $column,
                 'direction' => $direction === 1 ? 'asc' : 'desc',
-            ];
-        })->values();
-    }
-
-    /**
-     * Paginate the given query using a cursor paginator.
-     *
-     * @param  int  $perPage
-     * @param  array|string  $columns
-     * @param  string  $cursorName
-     * @param PaginationCursor|string|null  $cursor
-     * @return \Illuminate\Contracts\Pagination\CursorPaginator
-     */
-    protected function paginateUsingCursor($perPage, $columns = ['*'], $cursorName = 'cursor', $cursor = null) {
-        if (! $cursor instanceof PaginationCursor) {
-            $cursor = is_string($cursor)
-                ? PaginationCursor::fromEncoded($cursor)
-                : CursorPaginator::resolveCurrentCursor($cursorName, $cursor);
-        }
-
-        $orders = $this->ensureOrderForCursorPagination(! is_null($cursor) && $cursor->pointsToPreviousItems());
-
-        if (! is_null($cursor)) {
-            $addCursorConditions = function (self $builder, $previousColumn, $i) use (&$addCursorConditions, $cursor, $orders) {
-                $unionBuilders = isset($builder->unions) ? collect($builder->unions)->pluck('query') : collect();
-
-                if (! is_null($previousColumn)) {
-                    $originalColumn = $this->getOriginalColumnNameForCursorPagination($this, $previousColumn);
-
-                    $builder->where(
-                        Str::contains($originalColumn, ['(', ')']) ? new Expression($originalColumn) : $originalColumn,
-                        '=',
-                        $value
-                    );
-
-                    $unionBuilders->each(function ($unionBuilder) use ($previousColumn, $cursor) {
-                        $unionBuilder->where(
-                            $this->getOriginalColumnNameForCursorPagination($this, $previousColumn),
-                            '=',
-                            $cursor->parameter($previousColumn)
-                        );
-
-                        $this->addBinding($unionBuilder->getRawBindings()['where'], 'union');
-                    });
-                }
-
-                $builder->where(function (self $builder) use ($addCursorConditions, $cursor, $orders, $i, $unionBuilders) {
-                    ['column' => $column, 'direction' => $direction] = $orders[$i];
-
-                    $originalColumn = $this->getOriginalColumnNameForCursorPagination($this, $column);
-
-                    $value = $cursor->parameter($column);
-
-                    if(in_array($originalColumn, $this->model->getDates())) {
-                        $value = Carbon::parse($cursor->parameter($column))->utc();
-                    }
-
-                    $builder->where(
-                        Str::contains($originalColumn, ['(', ')']) ? new Expression($originalColumn) : $originalColumn,
-                        $direction === 'asc' ? '>' : '<',
-                        $value
-                    );
-
-                    if ($i < $orders->count() - 1) {
-                        $builder->orWhere(function (self $builder) use ($addCursorConditions, $column, $i) {
-                            $addCursorConditions($builder, $column, $i + 1);
-                        });
-                    }
-
-                    $unionBuilders->each(function ($unionBuilder) use ($column, $direction, $cursor, $i, $orders, $addCursorConditions) {
-                        $unionBuilder->where(function ($unionBuilder) use ($column, $direction, $cursor, $i, $orders, $addCursorConditions) {
-                            $unionBuilder->where(
-                                $this->getOriginalColumnNameForCursorPagination($this, $column),
-                                $direction === 'asc' ? '>' : '<',
-                                $cursor->parameter($column)
-                            );
-
-                            if ($i < $orders->count() - 1) {
-                                $unionBuilder->orWhere(function (self $builder) use ($addCursorConditions, $column, $i) {
-                                    $addCursorConditions($builder, $column, $i + 1);
-                                });
-                            }
-
-                            $this->addBinding($unionBuilder->getRawBindings()['where'], 'union');
-                        });
-                    });
-                });
-            };
-
-            $addCursorConditions($this, null, 0);
-        }
-
-        $this->limit($perPage + 1);
-
-        return $this->cursorPaginator($this->get($columns), $perPage, $cursor, [
-            'path' => Paginator::resolveCurrentPath(),
-            'cursorName' => $cursorName,
-            'parameters' => $orders->pluck('column')->toArray(),
-        ]);
+            ])->values();
     }
 }

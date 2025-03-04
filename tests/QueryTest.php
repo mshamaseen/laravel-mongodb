@@ -2,6 +2,18 @@
 
 declare(strict_types=1);
 
+namespace MongoDB\Laravel\Tests;
+
+use BadMethodCallException;
+use DateTimeImmutable;
+use MongoDB\BSON\Regex;
+use MongoDB\Laravel\Eloquent\Builder;
+use MongoDB\Laravel\Tests\Models\Birthday;
+use MongoDB\Laravel\Tests\Models\Scoped;
+use MongoDB\Laravel\Tests\Models\User;
+
+use function str;
+
 class QueryTest extends TestCase
 {
     protected static $started = false;
@@ -9,6 +21,7 @@ class QueryTest extends TestCase
     public function setUp(): void
     {
         parent::setUp();
+
         User::create(['name' => 'John Doe', 'age' => 35, 'title' => 'admin']);
         User::create(['name' => 'Jane Doe', 'age' => 33, 'title' => 'admin']);
         User::create(['name' => 'Harry Hoe', 'age' => 13, 'title' => 'user']);
@@ -18,12 +31,13 @@ class QueryTest extends TestCase
         User::create(['name' => 'Tommy Toe', 'age' => 33, 'title' => 'user']);
         User::create(['name' => 'Yvonne Yoe', 'age' => 35, 'title' => 'admin']);
         User::create(['name' => 'Error', 'age' => null, 'title' => null]);
-        Birthday::create(['name' => 'Mark Moe', 'birthday' => '2020-04-10', 'day' => '10', 'month' => '04', 'year' => '2020', 'time' => '10:53:11']);
-        Birthday::create(['name' => 'Jane Doe', 'birthday' => '2021-05-12', 'day' => '12', 'month' => '05', 'year' => '2021', 'time' => '10:53:12']);
-        Birthday::create(['name' => 'Harry Hoe', 'birthday' => '2021-05-11', 'day' => '11', 'month' => '05', 'year' => '2021', 'time' => '10:53:13']);
-        Birthday::create(['name' => 'Robert Doe', 'birthday' => '2021-05-12', 'day' => '12', 'month' => '05', 'year' => '2021', 'time' => '10:53:14']);
-        Birthday::create(['name' => 'Mark Moe', 'birthday' => '2021-05-12', 'day' => '12', 'month' => '05', 'year' => '2021', 'time' => '10:53:15']);
-        Birthday::create(['name' => 'Mark Moe', 'birthday' => '2022-05-12', 'day' => '12', 'month' => '05', 'year' => '2022', 'time' => '10:53:16']);
+        Birthday::create(['name' => 'Mark Moe', 'birthday' => new DateTimeImmutable('2020-04-10 10:53:11')]);
+        Birthday::create(['name' => 'Jane Doe', 'birthday' => new DateTimeImmutable('2021-05-12 10:53:12')]);
+        Birthday::create(['name' => 'Harry Hoe', 'birthday' => new DateTimeImmutable('2021-05-11 10:53:13')]);
+        Birthday::create(['name' => 'Robert Doe', 'birthday' => new DateTimeImmutable('2021-05-12 10:53:14')]);
+        Birthday::create(['name' => 'Mark Moe', 'birthday' => new DateTimeImmutable('2021-05-12 10:53:15')]);
+        Birthday::create(['name' => 'Mark Moe', 'birthday' => new DateTimeImmutable('2022-05-12 10:53:16')]);
+        Birthday::create(['name' => 'Boo']);
     }
 
     public function tearDown(): void
@@ -31,6 +45,7 @@ class QueryTest extends TestCase
         User::truncate();
         Scoped::truncate();
         Birthday::truncate();
+
         parent::tearDown();
     }
 
@@ -64,6 +79,21 @@ class QueryTest extends TestCase
         $this->assertCount(2, $users);
     }
 
+    public function testRegexp(): void
+    {
+        User::create(['name' => 'Simple', 'company' => 'acme']);
+        User::create(['name' => 'With slash', 'company' => 'oth/er']);
+
+        $users = User::where('company', 'regexp', '/^acme$/')->get();
+        $this->assertCount(1, $users);
+
+        $users = User::where('company', 'regexp', '/^ACME$/i')->get();
+        $this->assertCount(1, $users);
+
+        $users = User::where('company', 'regexp', '/^oth\/er$/')->get();
+        $this->assertCount(1, $users);
+    }
+
     public function testLike(): void
     {
         $users = User::where('name', 'like', '%doe')->get();
@@ -76,6 +106,12 @@ class QueryTest extends TestCase
         $this->assertCount(3, $users);
 
         $users = User::where('name', 'like', 't%')->get();
+        $this->assertCount(1, $users);
+
+        $users = User::where('name', 'like', 'j___ doe')->get();
+        $this->assertCount(2, $users);
+
+        $users = User::where('name', 'like', '_oh_ _o_')->get();
         $this->assertCount(1, $users);
     }
 
@@ -118,6 +154,48 @@ class QueryTest extends TestCase
 
         $this->assertEquals('John Doe', $user->name);
         $this->assertNull($user->age);
+    }
+
+    public function testWhereNot(): void
+    {
+        // implicit equality operator
+        $users = User::whereNot('title', 'admin')->get();
+        $this->assertCount(6, $users);
+
+        // nested query
+        $users = User::whereNot(fn (Builder $builder) => $builder->where('title', 'admin'))->get();
+        $this->assertCount(6, $users);
+
+        // double negation
+        $users = User::whereNot('title', '!=', 'admin')->get();
+        $this->assertCount(3, $users);
+
+        // nested negation
+        $users = User::whereNot(fn (Builder $builder) => $builder
+            ->whereNot('title', 'admin'))->get();
+        $this->assertCount(3, $users);
+
+        // explicit equality operator
+        $users = User::whereNot('title', '=', 'admin')->get();
+        $this->assertCount(6, $users);
+
+        // custom query operator
+        $users = User::whereNot('title', ['$in' => ['admin']])->get();
+        $this->assertCount(6, $users);
+
+        // regex
+        $users = User::whereNot('title', new Regex('^admin$'))->get();
+        $this->assertCount(6, $users);
+
+        // equals null
+        $users = User::whereNot('title', null)->get();
+        $this->assertCount(8, $users);
+
+        // nested $or
+        $users = User::whereNot(fn (Builder $builder) => $builder
+            ->where('title', 'admin')
+            ->orWhere('age', 35))->get();
+        $this->assertCount(5, $users);
     }
 
     public function testOrWhere(): void
@@ -177,45 +255,84 @@ class QueryTest extends TestCase
 
         $birthdayCount = Birthday::whereDate('birthday', '2021-05-11')->get();
         $this->assertCount(1, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '>', '2021-05-11')->get();
+        $this->assertCount(4, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '>=', '2021-05-11')->get();
+        $this->assertCount(5, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '<', '2021-05-11')->get();
+        $this->assertCount(1, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '<=', '2021-05-11')->get();
+        $this->assertCount(2, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '<>', '2021-05-11')->get();
+        $this->assertCount(6, $birthdayCount);
     }
 
     public function testWhereDay(): void
     {
-        $day = Birthday::whereDay('day', '12')->get();
+        $day = Birthday::whereDay('birthday', '12')->get();
         $this->assertCount(4, $day);
 
-        $day = Birthday::whereDay('day', '11')->get();
+        $day = Birthday::whereDay('birthday', '11')->get();
         $this->assertCount(1, $day);
     }
 
     public function testWhereMonth(): void
     {
-        $month = Birthday::whereMonth('month', '04')->get();
+        $month = Birthday::whereMonth('birthday', '04')->get();
         $this->assertCount(1, $month);
 
-        $month = Birthday::whereMonth('month', '05')->get();
+        $month = Birthday::whereMonth('birthday', '05')->get();
         $this->assertCount(5, $month);
+
+        $month = Birthday::whereMonth('birthday', '>=', '5')->get();
+        $this->assertCount(5, $month);
+
+        $month = Birthday::whereMonth('birthday', '<', '10')->get();
+        $this->assertCount(7, $month);
+
+        $month = Birthday::whereMonth('birthday', '<>', '5')->get();
+        $this->assertCount(2, $month);
     }
 
     public function testWhereYear(): void
     {
-        $year = Birthday::whereYear('year', '2021')->get();
+        $year = Birthday::whereYear('birthday', '2021')->get();
         $this->assertCount(4, $year);
 
-        $year = Birthday::whereYear('year', '2022')->get();
+        $year = Birthday::whereYear('birthday', '2022')->get();
         $this->assertCount(1, $year);
 
-        $year = Birthday::whereYear('year', '<', '2021')->get();
-        $this->assertCount(1, $year);
+        $year = Birthday::whereYear('birthday', '<', '2021')->get();
+        $this->assertCount(2, $year);
+
+        $year = Birthday::whereYear('birthday', '<>', '2021')->get();
+        $this->assertCount(3, $year);
     }
 
     public function testWhereTime(): void
     {
-        $time = Birthday::whereTime('time', '10:53:11')->get();
+        $time = Birthday::whereTime('birthday', '10:53:11')->get();
         $this->assertCount(1, $time);
 
-        $time = Birthday::whereTime('time', '>=', '10:53:14')->get();
+        $time = Birthday::whereTime('birthday', '10:53')->get();
+        $this->assertCount(6, $time);
+
+        $time = Birthday::whereTime('birthday', '10')->get();
+        $this->assertCount(6, $time);
+
+        $time = Birthday::whereTime('birthday', '>=', '10:53:14')->get();
         $this->assertCount(3, $time);
+
+        $time = Birthday::whereTime('birthday', '!=', '10:53:14')->get();
+        $this->assertCount(6, $time);
+
+        $time = Birthday::whereTime('birthday', '<', '10:53:12')->get();
+        $this->assertCount(2, $time);
     }
 
     public function testOrder(): void
@@ -286,7 +403,7 @@ class QueryTest extends TestCase
         $this->assertEquals(6, $count);
 
         // Test for issue #165
-        $count = User::select('_id', 'age', 'title')->where('age', '<>', 35)->count();
+        $count = User::select('id', 'age', 'title')->where('age', '<>', 35)->count();
         $this->assertEquals(6, $count);
     }
 
@@ -294,6 +411,8 @@ class QueryTest extends TestCase
     {
         $this->assertFalse(User::where('age', '>', 37)->exists());
         $this->assertTrue(User::where('age', '<', 37)->exists());
+        $this->assertTrue(User::where('age', '>', 37)->doesntExist());
+        $this->assertFalse(User::where('age', '<', 37)->doesntExist());
     }
 
     public function testSubQuery(): void
@@ -354,7 +473,7 @@ class QueryTest extends TestCase
 
         $where1 = ['age' => ['$gt' => 30, '$lte' => 35]];
         $where2 = ['age' => ['$gt' => 35, '$lt' => 40]];
-        $users = User::whereRaw($where1)->orWhereRaw($where2)->get();
+        $users  = User::whereRaw($where1)->orWhereRaw($where2)->get();
 
         $this->assertCount(6, $users);
     }
@@ -415,6 +534,44 @@ class QueryTest extends TestCase
         $this->assertEquals(2, $results->count());
         $this->assertEquals(13, $results->first()->age);
         $this->assertNull($results->first()->title);
+    }
+
+    public function testPaginateGroup(): void
+    {
+        // First page
+        $results = User::groupBy('age')->paginate(2);
+        $this->assertEquals(2, $results->count());
+        $this->assertEquals(6, $results->total());
+        $this->assertEquals(3, $results->lastPage());
+        $this->assertEquals(1, $results->currentPage());
+        $this->assertCount(2, $results->items());
+        $this->assertArrayHasKey('age', $results->first()->getAttributes());
+
+        // Last page has fewer results
+        $results = User::groupBy('age')->paginate(4, page: 2);
+        $this->assertEquals(2, $results->count());
+        $this->assertEquals(6, $results->total());
+        $this->assertEquals(2, $results->lastPage());
+        $this->assertEquals(2, $results->currentPage());
+        $this->assertCount(2, $results->items());
+        $this->assertArrayHasKey('age', $results->first()->getAttributes());
+
+        // Using a filter
+        $results = User::where('title', 'admin')->groupBy('age')->paginate(4);
+        $this->assertEquals(2, $results->count());
+        $this->assertEquals(2, $results->total());
+        $this->assertEquals(1, $results->lastPage());
+        $this->assertEquals(1, $results->currentPage());
+        $this->assertCount(2, $results->items());
+        $this->assertArrayHasKey('age', $results->last()->getAttributes());
+    }
+
+    public function testPaginateDistinct(): void
+    {
+        $this->expectException(BadMethodCallException::class);
+        $this->expectExceptionMessage('Distinct queries cannot be used for pagination. Use GroupBy instead');
+
+        User::distinct('age')->paginate(2);
     }
 
     public function testUpdate(): void
@@ -479,5 +636,39 @@ class QueryTest extends TestCase
         $this->assertEquals('Yvonne Yoe', $subset[0]->name);
         $this->assertEquals('John Doe', $subset[1]->name);
         $this->assertEquals('Brett Boe', $subset[2]->name);
+    }
+
+    public function testDelete(): void
+    {
+        // Check fixtures
+        $this->assertEquals(3, User::where('title', 'admin')->count());
+
+        // Delete a single document with filter
+        User::where('title', 'admin')->limit(1)->delete();
+        $this->assertEquals(2, User::where('title', 'admin')->count());
+
+        // Delete all with filter
+        User::where('title', 'admin')->delete();
+        $this->assertEquals(0, User::where('title', 'admin')->count());
+
+        // Check remaining fixtures
+        $this->assertEquals(6, User::count());
+
+        // Delete a single document
+        User::limit(1)->delete();
+        $this->assertEquals(5, User::count());
+
+        // Delete all
+        User::limit(null)->delete();
+        $this->assertEquals(0, User::count());
+    }
+
+    public function testLimitCount(): void
+    {
+        $count = User::where('age', '>=', 20)->count();
+        $this->assertEquals(7, $count);
+
+        $count = User::where('age', '>=', 20)->options(['limit' => 3])->count();
+        $this->assertEquals(3, $count);
     }
 }

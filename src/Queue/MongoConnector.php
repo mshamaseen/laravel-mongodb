@@ -1,24 +1,28 @@
 <?php
 
-namespace Jenssegers\Mongodb\Queue;
+declare(strict_types=1);
 
+namespace MongoDB\Laravel\Queue;
+
+use Illuminate\Contracts\Queue\Queue;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Queue\Connectors\ConnectorInterface;
-use Illuminate\Support\Arr;
+
+use function trigger_error;
+
+use const E_USER_DEPRECATED;
 
 class MongoConnector implements ConnectorInterface
 {
     /**
      * Database connections.
      *
-     * @var \Illuminate\Database\ConnectionResolverInterface
+     * @var ConnectionResolverInterface
      */
     protected $connections;
 
     /**
      * Create a new connector instance.
-     *
-     * @param \Illuminate\Database\ConnectionResolverInterface $connections
      */
     public function __construct(ConnectionResolverInterface $connections)
     {
@@ -28,16 +32,25 @@ class MongoConnector implements ConnectorInterface
     /**
      * Establish a queue connection.
      *
-     * @param array $config
-     * @return \Illuminate\Contracts\Queue\Queue
+     * @return Queue
      */
     public function connect(array $config)
     {
+        if (! isset($config['collection']) && isset($config['table'])) {
+            trigger_error('Since mongodb/laravel-mongodb 4.4: Using "table" option in queue configuration is deprecated. Use "collection" instead.', E_USER_DEPRECATED);
+            $config['collection'] = $config['table'];
+        }
+
+        if (! isset($config['retry_after']) && isset($config['expire'])) {
+            trigger_error('Since mongodb/laravel-mongodb 4.4: Using "expire" option in queue configuration is deprecated. Use "retry_after" instead.', E_USER_DEPRECATED);
+            $config['retry_after'] = $config['expire'];
+        }
+
         return new MongoQueue(
-            $this->connections->connection(Arr::get($config, 'connection')),
-            $config['table'],
-            $config['queue'],
-            Arr::get($config, 'expire', 60)
+            $this->connections->connection($config['connection'] ?? null),
+            $config['collection'] ?? 'jobs',
+            $config['queue'] ?? 'default',
+            $config['retry_after'] ?? 60,
         );
     }
 }

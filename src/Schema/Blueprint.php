@@ -1,22 +1,31 @@
 <?php
 
-namespace Jenssegers\Mongodb\Schema;
+declare(strict_types=1);
 
-use Illuminate\Database\Connection;
+namespace MongoDB\Laravel\Schema;
 
-class Blueprint extends \Illuminate\Database\Schema\Blueprint
+use Illuminate\Database\Schema\Blueprint as BaseBlueprint;
+use MongoDB\Collection;
+use MongoDB\Laravel\Connection;
+
+use function array_flip;
+use function implode;
+use function in_array;
+use function is_array;
+use function is_int;
+use function is_string;
+use function key;
+
+/** @property Connection $connection */
+class Blueprint extends BaseBlueprint
 {
-    /**
-     * The MongoConnection object for this blueprint.
-     *
-     * @var \Jenssegers\Mongodb\Connection
-     */
-    protected $connection;
+    // Import $connection property and constructor for Laravel 12 compatibility
+    use BlueprintLaravelCompatibility;
 
     /**
-     * The MongoCollection object for this blueprint.
+     * The MongoDB collection object for this blueprint.
      *
-     * @var \Jenssegers\Mongodb\Collection|\MongoDB\Collection
+     * @var Collection
      */
     protected $collection;
 
@@ -27,19 +36,7 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
      */
     protected $columns = [];
 
-    /**
-     * @inheritdoc
-     */
-    public function __construct(Connection $connection, $collection)
-    {
-        $this->connection = $connection;
-
-        $this->collection = $this->connection->getCollection($collection);
-    }
-
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function index($columns = null, $name = null, $algorithm = null, $options = [])
     {
         $columns = $this->fluent($columns);
@@ -65,22 +62,18 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
         return $this;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function primary($columns = null, $name = null, $algorithm = null, $options = [])
     {
         return $this->unique($columns, $name, $algorithm, $options);
     }
 
-    /**
-     * @inheritdoc
-     */
-    public function dropIndex($indexOrColumns = null)
+    /** @inheritdoc */
+    public function dropIndex($index = null)
     {
-        $indexOrColumns = $this->transformColumns($indexOrColumns);
+        $index = $this->transformColumns($index);
 
-        $this->collection->dropIndex($indexOrColumns);
+        $this->collection->dropIndex($index);
 
         return $this;
     }
@@ -88,7 +81,8 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
     /**
      * Indicate that the given index should be dropped, but do not fail if it didn't exist.
      *
-     * @param  string|array  $indexOrColumns
+     * @param  string|array $indexOrColumns
+     *
      * @return Blueprint
      */
     public function dropIndexIfExists($indexOrColumns = null)
@@ -103,7 +97,8 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
     /**
      * Check whether the given index exists.
      *
-     * @param  string|array  $indexOrColumns
+     * @param  string|array $indexOrColumns
+     *
      * @return bool
      */
     public function hasIndex($indexOrColumns = null)
@@ -114,7 +109,7 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
                 return true;
             }
 
-            if (is_string($indexOrColumns) && $index->getName() == $indexOrColumns) {
+            if (is_string($indexOrColumns) && $index->getName() === $indexOrColumns) {
                 return true;
             }
         }
@@ -123,7 +118,8 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
     }
 
     /**
-     * @param  string|array  $indexOrColumns
+     * @param  string|array $indexOrColumns
+     *
      * @return string
      */
     protected function transformColumns($indexOrColumns)
@@ -137,15 +133,15 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
             foreach ($indexOrColumns as $key => $value) {
                 if (is_int($key)) {
                     // There is no sorting order, use the default.
-                    $column = $value;
+                    $column  = $value;
                     $sorting = '1';
                 } else {
                     // This is a column with sorting order e.g 'my_column' => -1.
-                    $column = $key;
+                    $column  = $key;
                     $sorting = $value;
                 }
 
-                $transform[$column] = $column.'_'.$sorting;
+                $transform[$column] = $column . '_' . $sorting;
             }
 
             $indexOrColumns = implode('_', $transform);
@@ -154,9 +150,7 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
         return $indexOrColumns;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function unique($columns = null, $name = null, $algorithm = null, $options = [])
     {
         $columns = $this->fluent($columns);
@@ -169,25 +163,11 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
     }
 
     /**
-     * Specify a non blocking index for the collection.
-     *
-     * @param string|array $columns
-     * @return Blueprint
-     */
-    public function background($columns = null)
-    {
-        $columns = $this->fluent($columns);
-
-        $this->index($columns, null, null, ['background' => true]);
-
-        return $this;
-    }
-
-    /**
      * Specify a sparse index for the collection.
      *
      * @param string|array $columns
-     * @param array $options
+     * @param array        $options
+     *
      * @return Blueprint
      */
     public function sparse($columns = null, $options = [])
@@ -205,13 +185,14 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
      * Specify a geospatial index for the collection.
      *
      * @param string|array $columns
-     * @param string $index
-     * @param array $options
+     * @param string       $index
+     * @param array        $options
+     *
      * @return Blueprint
      */
     public function geospatial($columns = null, $index = '2d', $options = [])
     {
-        if ($index == '2d' || $index == '2dsphere') {
+        if ($index === '2d' || $index === '2dsphere') {
             $columns = $this->fluent($columns);
 
             $columns = array_flip($columns);
@@ -231,7 +212,8 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
      * on the given single-field index containing a date.
      *
      * @param string|array $columns
-     * @param int $seconds
+     * @param int          $seconds
+     *
      * @return Blueprint
      */
     public function expire($columns, $seconds)
@@ -247,29 +229,36 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
      * Indicate that the collection needs to be created.
      *
      * @param array $options
+     *
      * @return void
      */
     public function create($options = [])
     {
         $collection = $this->collection->getCollectionName();
 
-        $db = $this->connection->getMongoDB();
+        $db = $this->connection->getDatabase();
 
         // Ensure the collection is created.
         $db->createCollection($collection, $options);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function drop()
     {
         $this->collection->drop();
+
+        return $this;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
+    public function renameColumn($from, $to)
+    {
+        $this->collection->updateMany([$from => ['$exists' => true]], ['$rename' => [$from => $to]]);
+
+        return $this;
+    }
+
+    /** @inheritdoc */
     public function addColumn($type, $name, array $parameters = [])
     {
         $this->fluent($name);
@@ -281,8 +270,11 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
      * Specify a sparse and unique index for the collection.
      *
      * @param string|array $columns
-     * @param array $options
+     * @param array        $options
+     *
      * @return Blueprint
+     *
+     * phpcs:disable PSR1.Methods.CamelCapsMethodName.NotCamelCaps
      */
     public function sparse_and_unique($columns = null, $options = [])
     {
@@ -297,30 +289,80 @@ class Blueprint extends \Illuminate\Database\Schema\Blueprint
     }
 
     /**
+     * Create an Atlas Search Index.
+     *
+     * @see https://www.mongodb.com/docs/manual/reference/command/createSearchIndexes/#std-label-search-index-definition-create
+     *
+     * @phpstan-param array{
+     *      analyzer?: string,
+     *      analyzers?: list<array>,
+     *      searchAnalyzer?: string,
+     *      mappings: array{dynamic: true} | array{dynamic?: bool, fields: array<string, array>},
+     *      storedSource?: bool|array,
+     *      synonyms?: list<array>,
+     *      ...
+     *  } $definition
+     */
+    public function searchIndex(array $definition, string $name = 'default'): static
+    {
+        $this->collection->createSearchIndex($definition, ['name' => $name, 'type' => 'search']);
+
+        return $this;
+    }
+
+    /**
+     * Create an Atlas Vector Search Index.
+     *
+     * @see https://www.mongodb.com/docs/manual/reference/command/createSearchIndexes/#std-label-vector-search-index-definition-create
+     *
+     * @phpstan-param array{fields: array<string, array{type: string, ...}>} $definition
+     */
+    public function vectorSearchIndex(array $definition, string $name = 'default'): static
+    {
+        $this->collection->createSearchIndex($definition, ['name' => $name, 'type' => 'vectorSearch']);
+
+        return $this;
+    }
+
+    /**
+     * Drop an Atlas Search or Vector Search index
+     */
+    public function dropSearchIndex(string $name): static
+    {
+        $this->collection->dropSearchIndex($name);
+
+        return $this;
+    }
+
+    /**
      * Allow fluent columns.
      *
      * @param string|array $columns
+     *
      * @return string|array
      */
     protected function fluent($columns = null)
     {
         if ($columns === null) {
             return $this->columns;
-        } elseif (is_string($columns)) {
-            return $this->columns = [$columns];
-        } else {
-            return $this->columns = $columns;
         }
+
+        if (is_string($columns)) {
+            return $this->columns = [$columns];
+        }
+
+        return $this->columns = $columns;
     }
 
     /**
      * Allows the use of unsupported schema methods.
      *
-     * @param $method
-     * @param $args
+     * @param string $method
+     * @param array  $parameters
+     *
      * @return Blueprint
      */
-    public function __call($method, $args)
+    public function __call($method, $parameters)
     {
         // Dummy.
         return $this;

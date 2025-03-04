@@ -2,48 +2,37 @@
 
 declare(strict_types=1);
 
-use Illuminate\Auth\Passwords\PasswordResetServiceProvider;
+namespace MongoDB\Laravel\Tests;
 
-class TestCase extends Orchestra\Testbench\TestCase
+use Illuminate\Foundation\Application;
+use MongoDB\Driver\Exception\ServerException;
+use MongoDB\Laravel\MongoDBServiceProvider;
+use MongoDB\Laravel\Schema\Builder;
+use MongoDB\Laravel\Tests\Models\User;
+use MongoDB\Laravel\Validation\ValidationServiceProvider;
+use Orchestra\Testbench\TestCase as OrchestraTestCase;
+
+class TestCase extends OrchestraTestCase
 {
-    /**
-     * Get application providers.
-     *
-     * @param  \Illuminate\Foundation\Application  $app
-     * @return array
-     */
-    protected function getApplicationProviders($app)
-    {
-        $providers = parent::getApplicationProviders($app);
-
-        unset($providers[array_search(PasswordResetServiceProvider::class, $providers)]);
-
-        return $providers;
-    }
-
     /**
      * Get package providers.
      *
-     * @param  \Illuminate\Foundation\Application  $app
-     * @return array
+     * @param  Application $app
      */
-    protected function getPackageProviders($app)
+    protected function getPackageProviders($app): array
     {
         return [
-            Jenssegers\Mongodb\MongodbServiceProvider::class,
-            Jenssegers\Mongodb\MongodbQueueServiceProvider::class,
-            Jenssegers\Mongodb\Auth\PasswordResetServiceProvider::class,
-            Jenssegers\Mongodb\Validation\ValidationServiceProvider::class,
+            MongoDBServiceProvider::class,
+            ValidationServiceProvider::class,
         ];
     }
 
     /**
      * Define environment setup.
      *
-     * @param  Illuminate\Foundation\Application  $app
-     * @return void
+     * @param  Application $app
      */
-    protected function getEnvironmentSetUp($app)
+    protected function getEnvironmentSetUp($app): void
     {
         // reset base path to point to our package's src directory
         //$app['path.base'] = __DIR__ . '/../src';
@@ -53,13 +42,19 @@ class TestCase extends Orchestra\Testbench\TestCase
         $app['config']->set('app.key', 'ZsZewWyUJ5FsKp9lMwv4tYbNlegQilM7');
 
         $app['config']->set('database.default', 'mongodb');
-        $app['config']->set('database.connections.mysql', $config['connections']['mysql']);
+        $app['config']->set('database.connections.sqlite', $config['connections']['sqlite']);
         $app['config']->set('database.connections.mongodb', $config['connections']['mongodb']);
         $app['config']->set('database.connections.mongodb2', $config['connections']['mongodb']);
 
-        $app['config']->set('auth.model', 'User');
-        $app['config']->set('auth.providers.users.model', 'User');
+        $app['config']->set('auth.model', User::class);
+        $app['config']->set('auth.providers.users.model', User::class);
         $app['config']->set('cache.driver', 'array');
+
+        $app['config']->set('cache.stores.mongodb', [
+            'driver' => 'mongodb',
+            'connection' => 'mongodb',
+            'collection' => 'foo_cache',
+        ]);
 
         $app['config']->set('queue.default', 'database');
         $app['config']->set('queue.connections.database', [
@@ -70,5 +65,18 @@ class TestCase extends Orchestra\Testbench\TestCase
         ]);
         $app['config']->set('queue.failed.database', 'mongodb2');
         $app['config']->set('queue.failed.driver', 'mongodb');
+    }
+
+    public function skipIfSearchIndexManagementIsNotSupported(): void
+    {
+        try {
+            $this->getConnection('mongodb')->getCollection('test')->listSearchIndexes(['name' => 'just_for_testing']);
+        } catch (ServerException $e) {
+            if (Builder::isAtlasSearchNotSupportedException($e)) {
+                self::markTestSkipped('Search index management is not supported on this server');
+            }
+
+            throw $e;
+        }
     }
 }

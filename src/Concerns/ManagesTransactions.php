@@ -1,15 +1,20 @@
 <?php
 
-namespace Jenssegers\Mongodb\Concerns;
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Concerns;
 
 use Closure;
 use MongoDB\Client;
 use MongoDB\Driver\Exception\RuntimeException;
 use MongoDB\Driver\Session;
-use function MongoDB\with_transaction;
 use Throwable;
 
+use function MongoDB\with_transaction;
+
 /**
+ * @internal
+ *
  * @see https://docs.mongodb.com/manual/core/transactions/
  */
 trait ManagesTransactions
@@ -18,10 +23,7 @@ trait ManagesTransactions
 
     protected $transactions = 0;
 
-    /**
-     * @return Client
-     */
-    abstract public function getMongoClient();
+    abstract public function getClient(): ?Client;
 
     public function getSession(): ?Session
     {
@@ -31,7 +33,7 @@ trait ManagesTransactions
     private function getSessionOrCreate(): Session
     {
         if ($this->session === null) {
-            $this->session = $this->getMongoClient()->startSession();
+            $this->session = $this->getClient()->startSession();
         }
 
         return $this->session;
@@ -78,13 +80,13 @@ trait ManagesTransactions
     /**
      * Static transaction function realize the with_transaction functionality provided by MongoDB.
      *
-     * @param  int  $attempts
+     * @param  int $attempts
      */
     public function transaction(Closure $callback, $attempts = 1, array $options = []): mixed
     {
-        $attemptsLeft = $attempts;
+        $attemptsLeft   = $attempts;
         $callbackResult = null;
-        $throwable = null;
+        $throwable      = null;
 
         $callbackFunction = function (Session $session) use ($callback, &$attemptsLeft, &$callbackResult, &$throwable) {
             $attemptsLeft--;

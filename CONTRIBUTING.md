@@ -36,6 +36,32 @@ Before submitting a pull request:
 - Check the codebase to ensure that your feature doesn't already exist.
 - Check the pull requests to ensure that another person hasn't already submitted the feature or fix.
 
+## Run Tests
+
+The full test suite requires PHP cli with mongodb extension and a running MongoDB server. A replica set is required for
+testing transactions.
+Duplicate the `phpunit.xml.dist` file to `phpunit.xml` and edit the environment variables to match your setup.
+
+```bash
+$ docker-compose run app
+```
+
+Docker can be slow to start. You can run the command `composer run test` locally or in a docker container.
+
+```bash
+$ docker-compose run -it tests bash
+# Inside the container
+$ composer install
+$ composer run test
+```
+
+For fixing style issues, you can run the PHP Code Beautifier and Fixer, some issues can't be fixed automatically:
+
+```bash
+$ composer run cs:fix
+$ composer run cs
+```
+
 ## Requirements
 
 If the project maintainer has any additional requirements, you will find them listed here.
@@ -44,12 +70,15 @@ If the project maintainer has any additional requirements, you will find them li
 
 - **Add tests!** - Your patch won't be accepted if it doesn't have tests.
 
-- **Document any change in behaviour** - Make sure the `README.md` and any other relevant documentation are kept up-to-date.
+- **Document any change in behaviour** - Make sure the documentation is kept up-to-date.
 
 - **Consider our release cycle** - We try to follow [SemVer v2.0.0](https://semver.org/). Randomly breaking public APIs is not an option.
 
 - **One pull request per feature** - If you want to do more than one thing, send multiple pull requests.
 
-- **Send coherent history** - Make sure each individual commit in your pull request is meaningful. If you had to make multiple intermediate commits while developing, please [squash them](https://www.git-scm.com/book/en/v2/Git-Tools-Rewriting-History#Changing-Multiple-Commit-Messages) before submitting.
+Happy coding!
 
-**Happy coding**!
+## Releasing
+
+The releases are created by the maintainers of the library. The process is documented in
+the [RELEASING.md](RELEASING.md) file.

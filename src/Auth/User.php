@@ -1,20 +1,15 @@
 <?php
 
-namespace Jenssegers\Mongodb\Auth;
+declare(strict_types=1);
 
-use Illuminate\Auth\Authenticatable;
-use Illuminate\Auth\MustVerifyEmail;
-use Illuminate\Auth\Passwords\CanResetPassword;
-use Illuminate\Contracts\Auth\Access\Authorizable as AuthorizableContract;
-use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
-use Illuminate\Contracts\Auth\CanResetPassword as CanResetPasswordContract;
-use Illuminate\Foundation\Auth\Access\Authorizable;
-use Jenssegers\Mongodb\Eloquent\Model;
+namespace MongoDB\Laravel\Auth;
 
-class User extends Model implements
-    AuthenticatableContract,
-    AuthorizableContract,
-    CanResetPasswordContract
+use Illuminate\Foundation\Auth\User as BaseUser;
+use MongoDB\Laravel\Eloquent\DocumentModel;
+
+class User extends BaseUser
 {
-    use Authenticatable, Authorizable, CanResetPassword, MustVerifyEmail;
+    use DocumentModel;
+
+    protected $keyType = 'string';
 }

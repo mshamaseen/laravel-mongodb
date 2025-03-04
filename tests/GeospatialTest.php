@@ -2,13 +2,18 @@
 
 declare(strict_types=1);
 
+namespace MongoDB\Laravel\Tests;
+
+use Illuminate\Support\Facades\Schema;
+use MongoDB\Laravel\Tests\Models\Location;
+
 class GeospatialTest extends TestCase
 {
     public function setUp(): void
     {
         parent::setUp();
 
-        Schema::collection('locations', function ($collection) {
+        Schema::table('locations', function ($collection) {
             $collection->geospatial('location', '2dsphere');
         });
 
@@ -48,6 +53,8 @@ class GeospatialTest extends TestCase
     public function tearDown(): void
     {
         Schema::drop('locations');
+
+        parent::tearDown();
     }
 
     public function testGeoWithin()

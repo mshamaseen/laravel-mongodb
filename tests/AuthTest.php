@@ -1,15 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Tests;
+
+use Carbon\Carbon;
 use Illuminate\Auth\Passwords\PasswordBroker;
-use MongoDB\BSON\UTCDateTime;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use MongoDB\Laravel\Tests\Models\User;
+
+use function bcrypt;
 
 class AuthTest extends TestCase
 {
     public function tearDown(): void
     {
-        parent::setUp();
         User::truncate();
-        DB::collection('password_reset_tokens')->truncate();
+        DB::table('password_reset_tokens')->truncate();
+
+        parent::tearDown();
     }
 
     public function testAuthAttempt()
@@ -41,18 +52,18 @@ class AuthTest extends TestCase
             $broker->sendResetLink(
                 ['email' => 'john.doe@example.com'],
                 function ($actualUser, $actualToken) use ($user, &$token) {
-                    $this->assertEquals($user->_id, $actualUser->_id);
+                    $this->assertEquals($user->id, $actualUser->id);
                     // Store token for later use
                     $token = $actualToken;
-                }
-            )
+                },
+            ),
         );
 
-        $this->assertEquals(1, DB::collection('password_reset_tokens')->count());
-        $reminder = DB::collection('password_reset_tokens')->first();
-        $this->assertEquals('john.doe@example.com', $reminder['email']);
-        $this->assertNotNull($reminder['token']);
-        $this->assertInstanceOf(UTCDateTime::class, $reminder['created_at']);
+        $this->assertEquals(1, DB::table('password_reset_tokens')->count());
+        $reminder = DB::table('password_reset_tokens')->first();
+        $this->assertEquals('john.doe@example.com', $reminder->email);
+        $this->assertNotNull($reminder->token);
+        $this->assertInstanceOf(Carbon::class, $reminder->created_at);
 
         $credentials = [
             'email' => 'john.doe@example.com',
@@ -67,6 +78,6 @@ class AuthTest extends TestCase
         });
 
         $this->assertEquals('passwords.reset', $response);
-        $this->assertEquals(0, DB::collection('password_resets')->count());
+        $this->assertEquals(0, DB::table('password_resets')->count());
     }
 }

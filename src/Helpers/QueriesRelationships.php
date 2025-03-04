@@ -1,6 +1,8 @@
 <?php
 
-namespace Jenssegers\Mongodb\Helpers;
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Helpers;
 
 use Closure;
 use Exception;
@@ -9,7 +11,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOneOrMany;
 use Illuminate\Database\Eloquent\Relations\Relation;
-use Jenssegers\Mongodb\Eloquent\Model;
+use Illuminate\Support\Collection;
+use MongoDB\Laravel\Eloquent\Model;
+use MongoDB\Laravel\Relations\MorphToMany;
+
+use function array_count_values;
+use function array_filter;
+use function array_keys;
+use function array_map;
+use function class_basename;
+use function collect;
+use function in_array;
+use function is_array;
+use function is_string;
+use function method_exists;
+use function str_contains;
 
 trait QueriesRelationships
 {
@@ -17,17 +33,18 @@ trait QueriesRelationships
      * Add a relationship count / exists condition to the query.
      *
      * @param Relation|string $relation
-     * @param string $operator
-     * @param int $count
-     * @param string $boolean
-     * @param Closure|null $callback
+     * @param string          $operator
+     * @param int             $count
+     * @param string          $boolean
+     *
      * @return Builder|static
+     *
      * @throws Exception
      */
-    public function has($relation, $operator = '>=', $count = 1, $boolean = 'and', Closure $callback = null)
+    public function has($relation, $operator = '>=', $count = 1, $boolean = 'and', ?Closure $callback = null)
     {
         if (is_string($relation)) {
-            if (strpos($relation, '.') !== false) {
+            if (str_contains($relation, '.')) {
                 return $this->hasNested($relation, $operator, $count, $boolean, $callback);
             }
 
@@ -36,7 +53,7 @@ trait QueriesRelationships
 
         // If this is a hybrid relation then we can not use a normal whereExists() query that relies on a subquery
         // We need to use a `whereIn` query
-        if ($this->getModel() instanceof Model || $this->isAcrossConnections($relation)) {
+        if (Model::isDocumentModel($this->getModel()) || $this->isAcrossConnections($relation)) {
             return $this->addHybridHas($relation, $operator, $count, $boolean, $callback);
         }
 
@@ -48,7 +65,8 @@ trait QueriesRelationships
             : 'getRelationExistenceCountQuery';
 
         $hasQuery = $relation->{$method}(
-            $relation->getRelated()->newQuery(), $this
+            $relation->getRelated()->newQuery(),
+            $this
         );
 
         // Next we will call any given callback as an "anonymous" scope so they can get the
@@ -59,14 +77,15 @@ trait QueriesRelationships
         }
 
         return $this->addHasWhere(
-            $hasQuery, $relation, $operator, $count, $boolean
+            $hasQuery,
+            $relation,
+            $operator,
+            $count,
+            $boolean,
         );
     }
 
-    /**
-     * @param Relation $relation
-     * @return bool
-     */
+    /** @return bool */
     protected function isAcrossConnections(Relation $relation)
     {
         return $relation->getParent()->getConnectionName() !== $relation->getRelated()->getConnectionName();
@@ -75,15 +94,15 @@ trait QueriesRelationships
     /**
      * Compare across databases.
      *
-     * @param Relation $relation
      * @param string $operator
-     * @param int $count
+     * @param int    $count
      * @param string $boolean
-     * @param Closure|null $callback
+     *
      * @return mixed
+     *
      * @throws Exception
      */
-    public function addHybridHas(Relation $relation, $operator = '>=', $count = 1, $boolean = 'and', Closure $callback = null)
+    public function addHybridHas(Relation $relation, $operator = '>=', $count = 1, $boolean = 'and', ?Closure $callback = null)
     {
         $hasQuery = $relation->getQuery();
         if ($callback) {
@@ -93,11 +112,16 @@ trait QueriesRelationships
         // If the operator is <, <= or !=, we will use whereNotIn.
         $not = in_array($operator, ['<', '<=', '!=']);
         // If we are comparing to 0, we need an additional $not flip.
-        if ($count == 0) {
+        if ($count === 0) {
             $not = ! $not;
         }
 
-        $relations = $hasQuery->pluck($this->getHasCompareKey($relation));
+        $relations = match (true) {
+            $relation instanceof MorphToMany => $relation->getInverse() ?
+              $this->handleMorphedByMany($hasQuery, $relation) :
+              $this->handleMorphToMany($hasQuery, $relation),
+            default => $hasQuery->pluck($this->getHasCompareKey($relation))
+        };
 
         $relatedIds = $this->getConstrainedRelatedIds($relations, $operator, $count);
 
@@ -105,9 +129,36 @@ trait QueriesRelationships
     }
 
     /**
+     * @param Builder  $hasQuery
      * @param Relation $relation
-     * @return string
+     *
+     * @return Collection
      */
+    private function handleMorphToMany($hasQuery, $relation)
+    {
+        // First we select the parent models that have a relation to our related model,
+        // Then extracts related model's ids from the pivot column
+        $hasQuery->where($relation->getTable() . '.' . $relation->getMorphType(), $relation->getParent()::class);
+        $relations = $hasQuery->pluck($relation->getTable());
+        $relations = $relation->extractIds($relations->flatten(1)->toArray(), $relation->getForeignPivotKeyName());
+
+        return collect($relations);
+    }
+
+    /**
+     * @param Builder  $hasQuery
+     * @param Relation $relation
+     *
+     * @return Collection
+     */
+    private function handleMorphedByMany($hasQuery, $relation)
+    {
+        $hasQuery->whereNotNull($relation->getForeignPivotKeyName());
+
+        return $hasQuery->pluck($relation->getForeignPivotKeyName())->flatten(1);
+    }
+
+    /** @return string */
     protected function getHasCompareKey(Relation $relation)
     {
         if (method_exists($relation, 'getHasCompareKey')) {
@@ -118,9 +169,10 @@ trait QueriesRelationships
     }
 
     /**
-     * @param $relations
-     * @param $operator
-     * @param $count
+     * @param Collection $relations
+     * @param string     $operator
+     * @param int        $count
+     *
      * @return array
      */
     protected function getConstrainedRelatedIds($relations, $operator, $count)
@@ -131,9 +183,10 @@ trait QueriesRelationships
         // Remove unwanted related objects based on the operator and count.
         $relationCount = array_filter($relationCount, function ($counted) use ($count, $operator) {
             // If we are comparing to 0, we always need all results.
-            if ($count == 0) {
+            if ($count === 0) {
                 return true;
             }
+
             switch ($operator) {
                 case '>=':
                 case '<':
@@ -143,7 +196,7 @@ trait QueriesRelationships
                     return $counted > $count;
                 case '=':
                 case '!=':
-                    return $counted == $count;
+                    return $counted === $count;
             }
         });
 
@@ -154,8 +207,8 @@ trait QueriesRelationships
     /**
      * Returns key we are constraining this parent model's query with.
      *
-     * @param Relation $relation
      * @return string
+     *
      * @throws Exception
      */
     protected function getRelatedConstraintKey(Relation $relation)
@@ -172,6 +225,6 @@ trait QueriesRelationships
             return $this->model->getKeyName();
         }
 
-        throw new Exception(class_basename($relation).' is not supported for hybrid query constraints.');
+        throw new Exception(class_basename($relation) . ' is not supported for hybrid query constraints.');
     }
 }

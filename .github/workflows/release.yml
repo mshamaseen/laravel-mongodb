@@ -1,0 +1,153 @@
+name: "Release New Version"
+run-name: "Release ${{ inputs.version }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to be released. This is checked for consistency with the branch name and configuration"
+        required: true
+        type: "string"
+
+jobs:
+  prepare-release:
+    environment: release
+    name: "Prepare release"
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+      - name: "Create release output"
+        run: echo '🎬 Release process for version ${{ inputs.version }} started by @${{ github.triggering_actor }}' >> $GITHUB_STEP_SUMMARY
+
+      - name: "Generate token and checkout repository"
+        uses: mongodb-labs/drivers-github-tools/secure-checkout@v2
+        with:
+          app_id: ${{ vars.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: "Store version numbers in env variables"
+        run: |
+          echo RELEASE_VERSION=${{ inputs.version }} >> $GITHUB_ENV
+          echo RELEASE_BRANCH=$(echo ${{ inputs.version }} | cut -d '.' -f-2) >> $GITHUB_ENV
+          echo DEV_BRANCH=$(echo ${{ inputs.version }} | cut -d '.' -f-1).x >> $GITHUB_ENV
+
+      - name: "Ensure release tag does not already exist"
+        run: |
+          if [[ $(git tag -l ${RELEASE_VERSION}) == ${RELEASE_VERSION} ]]; then
+            echo '❌ Release failed: tag for version ${{ inputs.version }} already exists' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      # For patch releases (A.B.C where C != 0), we expect the release to be
+      # triggered from the A.B maintenance branch
+      - name: "Fail if patch release is created from wrong release branch"
+        if: ${{ !endsWith(inputs.version, '.0') && env.RELEASE_BRANCH != github.ref_name }}
+        run: |
+          echo '❌ Release failed due to branch mismatch: expected ${{ inputs.version }} to be released from ${{ env.RELEASE_BRANCH }}, got ${{ github.ref_name }}' >> $GITHUB_STEP_SUMMARY
+          exit 1
+
+      # For non-patch releases (A.B.C where C == 0), we expect the release to
+      # be triggered from the A.x maintenance branch or A.x development branch
+      - name: "Fail if non-patch release is created from wrong release branch"
+        if: ${{ endsWith(inputs.version, '.0') && env.RELEASE_BRANCH != github.ref_name && env.DEV_BRANCH != github.ref_name }}
+        run: |
+          echo '❌ Release failed due to branch mismatch: expected ${{ inputs.version }} to be released from ${{ env.RELEASE_BRANCH }} or ${{ env.DEV_BRANCH }}, got ${{ github.ref_name }}' >> $GITHUB_STEP_SUMMARY
+          exit 1
+
+      # If a non-patch release is created from its A.x development branch,
+      # create the A.B maintenance branch from the current one and push it
+      - name: "Create and push new release branch for non-patch release"
+        if: ${{ endsWith(inputs.version, '.0') && env.DEV_BRANCH == github.ref_name }}
+        run: |
+          echo '🆕 Creating new release branch ${RELEASE_BRANCH} from ${{ github.ref_name }}' >> $GITHUB_STEP_SUMMARY
+          git checkout -b ${RELEASE_BRANCH}
+          git push origin ${RELEASE_BRANCH}
+
+      #
+      # Preliminary checks done - commence the release process
+      #
+
+      - name: "Set up drivers-github-tools"
+        uses: mongodb-labs/drivers-github-tools/setup@v2
+        with:
+          aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws_region_name: ${{ vars.AWS_REGION_NAME }}
+          aws_secret_id: ${{ secrets.AWS_SECRET_ID }}
+
+      # Create draft release with release notes
+      - name: "Create draft release"
+        run: echo "RELEASE_URL=$(gh release create ${{ inputs.version }} --target ${{ github.ref_name }} --title "${{ inputs.version }}" --generate-notes --draft)" >> "$GITHUB_ENV"
+
+      - name: "Create release tag"
+        uses: mongodb-labs/drivers-github-tools/tag-version@v2
+        with:
+          version: ${{ inputs.version }}
+          tag_message_template: 'Release ${VERSION}'
+
+      # TODO: Manually merge using ours strategy. This avoids merge-up pull requests being created
+      # Process is:
+      # 1. switch to next branch (according to merge-up action)
+      # 2. merge release branch using --strategy=ours
+      # 3. push next branch
+      # 4. switch back to release branch, then push
+
+      - name: "Set summary"
+        run: |
+          echo '🚀 Created tag and drafted release for version [${{ inputs.version }}](${{ env.RELEASE_URL }})' >> $GITHUB_STEP_SUMMARY
+          echo '✍️ You may now update the release notes and publish the release when ready' >> $GITHUB_STEP_SUMMARY
+
+  static-analysis:
+    needs: prepare-release
+    name: "Run Static Analysis"
+    uses: ./.github/workflows/static-analysis.yml
+    with:
+      ref: refs/tags/${{ inputs.version }}
+    permissions:
+      security-events: write
+      id-token: write
+
+  publish-ssdlc-assets:
+    needs: static-analysis
+    environment: release
+    name: "Publish SSDLC Assets"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: read
+      id-token: write
+      contents: write
+
+    steps:
+      - name: "Generate token and checkout repository"
+        uses: mongodb-labs/drivers-github-tools/secure-checkout@v2
+        with:
+          app_id: ${{ vars.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          ref: refs/tags/${{ inputs.version }}
+
+      # Sets the S3_ASSETS environment variable used later
+      - name: "Set up drivers-github-tools"
+        uses: mongodb-labs/drivers-github-tools/setup@v2
+        with:
+          aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws_region_name: ${{ vars.AWS_REGION_NAME }}
+          aws_secret_id: ${{ secrets.AWS_SECRET_ID }}
+
+      - name: "Generate SSDLC Reports"
+        uses: mongodb-labs/drivers-github-tools/full-report@v2
+        with:
+          product_name: "MongoDB Laravel Integration"
+          release_version: ${{ inputs.version }}
+          silk_asset_group: mongodb-laravel-integration
+
+      - name: "Upload SBOM as release artifact"
+        run: gh release upload ${{ inputs.version }} ${{ env.S3_ASSETS }}/cyclonedx.sbom.json
+        continue-on-error: true
+
+      - name: Upload S3 assets
+        uses: mongodb-labs/drivers-github-tools/upload-s3-assets@v2
+        with:
+          version: ${{ inputs.version }}
+          product_name: laravel-mongodb

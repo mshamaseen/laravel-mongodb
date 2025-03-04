@@ -1,11 +1,22 @@
 <?php
 
-namespace Jenssegers\Mongodb\Relations;
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Relations;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Model as EloquentModel;
 use MongoDB\BSON\ObjectID;
+use MongoDB\Driver\Exception\LogicException;
+use Throwable;
 
+use function throw_if;
+
+/**
+ * @template TRelatedModel of Model
+ * @template TDeclaringModel of Model
+ * @template TResult
+ * @extends EmbedsOneOrMany<TRelatedModel, TDeclaringModel, TResult>
+ */
 class EmbedsOne extends EmbedsOneOrMany
 {
     public function initRelation(array $models, $relation)
@@ -33,14 +44,13 @@ class EmbedsOne extends EmbedsOneOrMany
     /**
      * Save a new model and attach it to the parent model.
      *
-     * @param  Model  $model
      * @return Model|bool
      */
     public function performInsert(Model $model)
     {
-        // Generate a new key if needed.
-        if ($model->getKeyName() == '_id' && ! $model->getKey()) {
-            $model->setAttribute('_id', new ObjectID);
+        // Create a new key if needed.
+        if (($model->getKeyName() === '_id' || $model->getKeyName() === 'id') && ! $model->getKey()) {
+            $model->setAttribute($model->getKeyName(), new ObjectID());
         }
 
         // For deeply nested documents, let the parent handle the changes.
@@ -63,7 +73,6 @@ class EmbedsOne extends EmbedsOneOrMany
     /**
      * Save an existing model and attach it to the parent model.
      *
-     * @param  Model  $model
      * @return Model|bool
      */
     public function performUpdate(Model $model)
@@ -74,7 +83,7 @@ class EmbedsOne extends EmbedsOneOrMany
             return $this->parent->save();
         }
 
-        $values = $this->getUpdateValues($model->getDirty(), $this->localKey.'.');
+        $values = self::getUpdateValues($model->getDirty(), $this->localKey . '.');
 
         $result = $this->toBase()->update($values);
 
@@ -114,7 +123,6 @@ class EmbedsOne extends EmbedsOneOrMany
     /**
      * Attach the model to its parent.
      *
-     * @param  Model  $model
      * @return Model
      */
     public function associate(Model $model)
@@ -135,21 +143,27 @@ class EmbedsOne extends EmbedsOneOrMany
     /**
      * Delete all embedded models.
      *
-     * @return int
+     * @param ?string $id
+     *
+     * @throws LogicException|Throwable
+     *
+     * @note The $id is not used to delete embedded models.
      */
-    public function delete()
+    public function delete($id = null): int
     {
+        throw_if($id !== null, new LogicException('The id parameter should not be used.'));
+
         return $this->performDelete();
     }
 
     /**
      * Get the name of the "where in" method for eager loading.
      *
-     * @param  \Illuminate\Database\Eloquent\Model  $model
-     * @param  string  $key
+     * @param  string $key
+     *
      * @return string
      */
-    protected function whereInMethod(EloquentModel $model, $key)
+    protected function whereInMethod(Model $model, $key)
     {
         return 'whereIn';
     }

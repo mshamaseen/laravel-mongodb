@@ -1,6 +1,8 @@
 <?php
 
-namespace Jenssegers\Mongodb\Validation;
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Validation;
 
 use Illuminate\Validation\ValidationServiceProvider as BaseProvider;
 

@@ -1,11 +1,18 @@
 <?php
 
-namespace Jenssegers\Mongodb\Relations;
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Relations;
 
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model as EloquentModel;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasOne as EloquentHasOne;
 
+/**
+ * @template TRelatedModel of Model
+ * @template TDeclaringModel of Model
+ * @extends EloquentHasOne<TRelatedModel, TDeclaringModel>
+ */
 class HasOne extends EloquentHasOne
 {
     /**
@@ -28,9 +35,7 @@ class HasOne extends EloquentHasOne
         return $this->getForeignKeyName();
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function getRelationExistenceQuery(Builder $query, Builder $parentQuery, $columns = ['*'])
     {
         $foreignKey = $this->getForeignKeyName();
@@ -41,11 +46,11 @@ class HasOne extends EloquentHasOne
     /**
      * Get the name of the "where in" method for eager loading.
      *
-     * @param \Illuminate\Database\Eloquent\Model $model
      * @param string $key
+     *
      * @return string
      */
-    protected function whereInMethod(EloquentModel $model, $key)
+    protected function whereInMethod(Model $model, $key)
     {
         return 'whereIn';
     }

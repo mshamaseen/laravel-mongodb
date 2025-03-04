@@ -1,17 +1,36 @@
 <?php
 
-namespace Jenssegers\Mongodb;
+declare(strict_types=1);
 
-use function class_exists;
+namespace MongoDB\Laravel;
+
 use Composer\InstalledVersions;
 use Illuminate\Database\Connection as BaseConnection;
-use Illuminate\Support\Arr;
 use InvalidArgumentException;
-use Jenssegers\Mongodb\Concerns\ManagesTransactions;
 use MongoDB\Client;
+use MongoDB\Collection;
 use MongoDB\Database;
+use MongoDB\Driver\Exception\AuthenticationException;
+use MongoDB\Driver\Exception\ConnectionException;
+use MongoDB\Driver\Exception\RuntimeException;
+use MongoDB\Driver\ReadPreference;
+use MongoDB\Laravel\Concerns\ManagesTransactions;
+use OutOfBoundsException;
 use Throwable;
 
+use function filter_var;
+use function implode;
+use function is_array;
+use function preg_match;
+use function sprintf;
+use function str_contains;
+use function trigger_error;
+
+use const E_USER_DEPRECATED;
+use const FILTER_FLAG_IPV6;
+use const FILTER_VALIDATE_IP;
+
+/** @mixin Database */
 class Connection extends BaseConnection
 {
     use ManagesTransactions;
@@ -32,10 +51,10 @@ class Connection extends BaseConnection
      */
     protected $connection;
 
+    private ?CommandSubscriber $commandSubscriber = null;
+
     /**
      * Create a new database connection instance.
-     *
-     * @param  array  $config
      */
     public function __construct(array $config)
     {
@@ -45,16 +64,16 @@ class Connection extends BaseConnection
         $dsn = $this->getDsn($config);
 
         // You can pass options directly to the MongoDB constructor
-        $options = Arr::get($config, 'options', []);
+        $options = $config['options'] ?? [];
 
         // Create the connection
         $this->connection = $this->createConnection($dsn, $config, $options);
-
-        // Get default database name
-        $default_db = $this->getDefaultDatabaseName($dsn, $config);
+        $this->database = $this->getDefaultDatabaseName($dsn, $config);
 
         // Select database
-        $this->db = $this->connection->selectDatabase($default_db);
+        $this->db = $this->connection->getDatabase($this->database);
+
+        $this->tablePrefix = $config['prefix'] ?? '';
 
         $this->useDefaultPostProcessor();
 
@@ -66,42 +85,31 @@ class Connection extends BaseConnection
     /**
      * Begin a fluent query against a database collection.
      *
-     * @param  string  $collection
-     * @return Query\Builder
-     */
-    public function collection($collection)
-    {
-        $query = new Query\Builder($this, $this->getPostProcessor());
-
-        return $query->from($collection);
-    }
-
-    /**
-     * Begin a fluent query against a database collection.
+     * @param  string      $table The name of the MongoDB collection
+     * @param  string|null $as    Ignored. Not supported by MongoDB
      *
-     * @param  string  $table
-     * @param  string|null  $as
      * @return Query\Builder
      */
     public function table($table, $as = null)
     {
-        return $this->collection($table);
+        $query = new Query\Builder($this, $this->getQueryGrammar(), $this->getPostProcessor());
+
+        return $query->from($table);
     }
 
     /**
      * Get a MongoDB collection.
      *
-     * @param  string  $name
+     * @param  string $name
+     *
      * @return Collection
      */
-    public function getCollection($name)
+    public function getCollection($name): Collection
     {
-        return new Collection($this, $this->db->selectCollection($name));
+        return $this->db->selectCollection($this->tablePrefix . $name);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function getSchemaBuilder()
     {
         return new Schema\Builder($this);
@@ -110,48 +118,102 @@ class Connection extends BaseConnection
     /**
      * Get the MongoDB database object.
      *
+     * @deprecated since mongodb/laravel-mongodb:5.2, use getDatabase() instead
+     *
      * @return Database
      */
     public function getMongoDB()
     {
+        trigger_error(sprintf('Since mongodb/laravel-mongodb:5.2, Method "%s()" is deprecated, use "getDatabase()" instead.', __FUNCTION__), E_USER_DEPRECATED);
+
         return $this->db;
     }
 
     /**
-     * return MongoDB object.
+     * Get the MongoDB database object.
+     *
+     * @param string|null $name Name of the database, if not provided the default database will be returned.
+     *
+     * @return Database
+     */
+    public function getDatabase(?string $name = null): Database
+    {
+        if ($name && $name !== $this->database) {
+            return $this->connection->getDatabase($name);
+        }
+
+        return $this->db;
+    }
+
+    /**
+     * Return MongoDB object.
+     *
+     * @deprecated since mongodb/laravel-mongodb:5.2, use getClient() instead
      *
      * @return Client
      */
     public function getMongoClient()
     {
-        return $this->connection;
+        trigger_error(sprintf('Since mongodb/laravel-mongodb:5.2, method "%s()" is deprecated, use "getClient()" instead.', __FUNCTION__), E_USER_DEPRECATED);
+
+        return $this->getClient();
     }
 
     /**
-     * {@inheritdoc}
+     * Get the MongoDB client.
      */
-    public function getDatabaseName()
+    public function getClient(): ?Client
     {
-        return $this->getMongoDB()->getDatabaseName();
+        return $this->connection;
+    }
+
+    public function enableQueryLog()
+    {
+        parent::enableQueryLog();
+
+        if (! $this->commandSubscriber) {
+            $this->commandSubscriber = new CommandSubscriber($this);
+            $this->connection->addSubscriber($this->commandSubscriber);
+        }
+    }
+
+    public function disableQueryLog()
+    {
+        parent::disableQueryLog();
+
+        if ($this->commandSubscriber) {
+            $this->connection->removeSubscriber($this->commandSubscriber);
+            $this->commandSubscriber = null;
+        }
+    }
+
+    protected function withFreshQueryLog($callback)
+    {
+        try {
+            return parent::withFreshQueryLog($callback);
+        } finally {
+            // The parent method enable query log using enableQueryLog()
+            // but disables it by setting $loggingQueries to false. We need to
+            // remove the subscriber for performance.
+            if (! $this->loggingQueries) {
+                $this->disableQueryLog();
+            }
+        }
     }
 
     /**
      * Get the name of the default database based on db config or try to detect it from dsn.
-     *
-     * @param  string  $dsn
-     * @param  array  $config
-     * @return string
      *
      * @throws InvalidArgumentException
      */
     protected function getDefaultDatabaseName(string $dsn, array $config): string
     {
         if (empty($config['database'])) {
-            if (preg_match('/^mongodb(?:[+]srv)?:\\/\\/.+\\/([^?&]+)/s', $dsn, $matches)) {
-                $config['database'] = $matches[1];
-            } else {
+            if (! preg_match('/^mongodb(?:[+]srv)?:\\/\\/.+\\/([^?&]+)/s', $dsn, $matches)) {
                 throw new InvalidArgumentException('Database is not properly configured.');
             }
+
+            $config['database'] = $matches[1];
         }
 
         return $config['database'];
@@ -159,13 +221,8 @@ class Connection extends BaseConnection
 
     /**
      * Create a new MongoDB connection.
-     *
-     * @param  string  $dsn
-     * @param  array  $config
-     * @param  array  $options
-     * @return Client
      */
-    protected function createConnection($dsn, array $config, array $options): Client
+    protected function createConnection(string $dsn, array $config, array $options): Client
     {
         // By default driver options is an empty array.
         $driverOptions = [];
@@ -183,37 +240,49 @@ class Connection extends BaseConnection
         if (! isset($options['username']) && ! empty($config['username'])) {
             $options['username'] = $config['username'];
         }
+
         if (! isset($options['password']) && ! empty($config['password'])) {
             $options['password'] = $config['password'];
+        }
+
+        if (isset($config['name'])) {
+            $driverOptions += ['connectionName' => $config['name']];
         }
 
         return new Client($dsn, $options, $driverOptions);
     }
 
     /**
-     * @inheritdoc
+     * Check the connection to the MongoDB server
+     *
+     * @throws ConnectionException if connection to the server fails (for reasons other than authentication).
+     * @throws AuthenticationException if authentication is needed and fails.
+     * @throws RuntimeException if a server matching the read preference could not be found.
      */
+    public function ping(): void
+    {
+        $this->getClient()->getManager()->selectServer(new ReadPreference(ReadPreference::PRIMARY_PREFERRED));
+    }
+
+    /** @inheritdoc */
     public function disconnect()
     {
-        unset($this->connection);
+        $this->disableQueryLog();
+        $this->connection = null;
     }
 
     /**
      * Determine if the given configuration array has a dsn string.
      *
-     * @param  array  $config
-     * @return bool
+     * @deprecated
      */
-    protected function hasDsnString(array $config)
+    protected function hasDsnString(array $config): bool
     {
-        return isset($config['dsn']) && ! empty($config['dsn']);
+        return ! empty($config['dsn']);
     }
 
     /**
      * Get the DSN string form configuration.
-     *
-     * @param  array  $config
-     * @return string
      */
     protected function getDsnString(array $config): string
     {
@@ -222,9 +291,6 @@ class Connection extends BaseConnection
 
     /**
      * Get the DSN string for a host / port configuration.
-     *
-     * @param  array  $config
-     * @return string
      */
     protected function getHostDsn(array $config): string
     {
@@ -232,91 +298,112 @@ class Connection extends BaseConnection
         $hosts = is_array($config['host']) ? $config['host'] : [$config['host']];
 
         foreach ($hosts as &$host) {
-            // Check if we need to add a port to the host
-            if (strpos($host, ':') === false && ! empty($config['port'])) {
-                $host = $host.':'.$config['port'];
+            // ipv6
+            if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                $host = '[' . $host . ']';
+                if (! empty($config['port'])) {
+                    $host .= ':' . $config['port'];
+                }
+            } else {
+                // Check if we need to add a port to the host
+                if (! str_contains($host, ':') && ! empty($config['port'])) {
+                    $host .= ':' . $config['port'];
+                }
             }
         }
 
         // Check if we want to authenticate against a specific database.
-        $auth_database = isset($config['options']) && ! empty($config['options']['database']) ? $config['options']['database'] : null;
+        $authDatabase = isset($config['options']) && ! empty($config['options']['database']) ? $config['options']['database'] : null;
 
-        return 'mongodb://'.implode(',', $hosts).($auth_database ? '/'.$auth_database : '');
+        return 'mongodb://' . implode(',', $hosts) . ($authDatabase ? '/' . $authDatabase : '');
     }
 
     /**
      * Create a DSN string from a configuration.
-     *
-     * @param  array  $config
-     * @return string
      */
     protected function getDsn(array $config): string
     {
-        return $this->hasDsnString($config)
-            ? $this->getDsnString($config)
-            : $this->getHostDsn($config);
+        if (! empty($config['dsn'])) {
+            return $this->getDsnString($config);
+        }
+
+        if (! empty($config['host'])) {
+            return $this->getHostDsn($config);
+        }
+
+        throw new InvalidArgumentException('MongoDB connection configuration requires "dsn" or "host" key.');
     }
 
-    /**
-     * @inheritdoc
-     */
-    public function getElapsedTime($start)
-    {
-        return parent::getElapsedTime($start);
-    }
-
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function getDriverName()
     {
         return 'mongodb';
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
+    public function getDriverTitle()
+    {
+        return 'MongoDB';
+    }
+
+    /** @inheritdoc */
     protected function getDefaultPostProcessor()
     {
         return new Query\Processor();
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     protected function getDefaultQueryGrammar()
     {
-        return new Query\Grammar();
+        // Argument added in Laravel 12
+        return new Query\Grammar($this);
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     protected function getDefaultSchemaGrammar()
     {
-        return new Schema\Grammar();
+        // Argument added in Laravel 12
+        return new Schema\Grammar($this);
     }
 
     /**
      * Set database.
-     *
-     * @param  \MongoDB\Database  $db
      */
-    public function setDatabase(\MongoDB\Database $db)
+    public function setDatabase(Database $db)
     {
         $this->db = $db;
+    }
+
+    /** @inheritdoc  */
+    public function threadCount()
+    {
+        $status = $this->db->command(['serverStatus' => 1])->toArray();
+
+        return $status[0]['connections']['current'];
     }
 
     /**
      * Dynamically pass methods to the connection.
      *
-     * @param  string  $method
+     * @param  string $method
      * @param  array  $parameters
+     *
      * @return mixed
      */
     public function __call($method, $parameters)
     {
         return $this->db->$method(...$parameters);
+    }
+
+    /**
+     * Return the server version of one of the MongoDB servers: primary for
+     * replica sets and standalone, and the selected server for sharded clusters.
+     *
+     * @internal
+     */
+    public function getServerVersion(): string
+    {
+        return $this->db->command(['buildInfo' => 1])->toArray()[0]['version'];
     }
 
     private static function getVersion(): string
@@ -326,14 +413,14 @@ class Connection extends BaseConnection
 
     private static function lookupVersion(): string
     {
-        if (class_exists(InstalledVersions::class)) {
+        try {
             try {
-                return self::$version = InstalledVersions::getPrettyVersion('jenssegers/laravel-mongodb');
-            } catch (Throwable $t) {
-                // Ignore exceptions and return unknown version
+                return self::$version = InstalledVersions::getPrettyVersion('mongodb/laravel-mongodb') ?? 'unknown';
+            } catch (OutOfBoundsException) {
+                return self::$version = InstalledVersions::getPrettyVersion('jenssegers/mongodb') ?? 'unknown';
             }
+        } catch (Throwable) {
+            return self::$version = 'error';
         }
-
-        return self::$version = 'unknown';
     }
 }

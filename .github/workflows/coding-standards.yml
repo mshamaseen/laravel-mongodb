@@ -1,0 +1,69 @@
+name: "Coding Standards"
+
+on:
+  push:
+  pull_request:
+
+env:
+  PHP_VERSION: "8.2"
+  DRIVER_VERSION: "stable"
+
+jobs:
+  phpcs:
+    name: "phpcs"
+    runs-on: "ubuntu-22.04"
+
+    permissions:
+      # Give the default GITHUB_TOKEN write permission to commit and push the
+      # added or changed files to the repository.
+      contents: write
+
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@v4"
+
+      - name: "Setup cache environment"
+        id: "extcache"
+        uses: "shivammathur/cache-extensions@v1"
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: "mongodb-${{ env.DRIVER_VERSION }}"
+          key: "extcache-v1"
+
+      - name: "Cache extensions"
+        uses: "actions/cache@v4"
+        with:
+          path: ${{ steps.extcache.outputs.dir }}
+          key: ${{ steps.extcache.outputs.key }}
+          restore-keys: ${{ steps.extcache.outputs.key }}
+
+      - name: "Install PHP"
+        uses: "shivammathur/setup-php@v2"
+        with:
+          coverage: "none"
+          extensions: "mongodb-${{ env.DRIVER_VERSION }}"
+          php-version: ${{ env.PHP_VERSION }}
+          tools: "cs2pr"
+
+      - name: "Show driver information"
+        run: "php --ri mongodb"
+
+      - name: "Install dependencies with Composer"
+        uses: "ramsey/composer-install@3.0.0"
+        with:
+          composer-options: "--no-suggest"
+
+      - name: "Format the code"
+        continue-on-error: true
+        run: |
+          mkdir .cache
+          ./vendor/bin/phpcbf
+
+      # The -q option is required until phpcs v4 is released
+      - name: "Run PHP_CodeSniffer"
+        run: "vendor/bin/phpcs -q --no-colors --report=checkstyle | cs2pr"
+
+      - name: "Commit the changes"
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "apply phpcbf formatting"

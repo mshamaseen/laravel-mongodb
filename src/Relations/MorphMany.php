@@ -1,21 +1,27 @@
 <?php
 
-namespace Jenssegers\Mongodb\Relations;
+declare(strict_types=1);
 
-use Illuminate\Database\Eloquent\Model as EloquentModel;
+namespace MongoDB\Laravel\Relations;
+
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphMany as EloquentMorphMany;
 
+/**
+ * @template TRelatedModel of Model
+ * @template TDeclaringModel of Model
+ * @extends EloquentMorphMany<TRelatedModel, TDeclaringModel>
+ */
 class MorphMany extends EloquentMorphMany
 {
     /**
      * Get the name of the "where in" method for eager loading.
      *
-     * @param \Illuminate\Database\Eloquent\Model $model
      * @param string $key
      *
      * @return string
      */
-    protected function whereInMethod(EloquentModel $model, $key)
+    protected function whereInMethod(Model $model, $key)
     {
         return 'whereIn';
     }

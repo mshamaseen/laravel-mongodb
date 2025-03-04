@@ -11,4 +11,6 @@ composer.lock
 composer.phar
 phpunit.phar
 phpunit.xml
+phpstan.neon
+/.cache/
 test.sh

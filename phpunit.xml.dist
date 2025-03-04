@@ -1,49 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" backupGlobals="false" backupStaticAttributes="false" bootstrap="vendor/autoload.php" colors="true" convertErrorsToExceptions="true" convertNoticesToExceptions="true" convertWarningsToExceptions="true" processIsolation="false" stopOnFailure="false" xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/9.3/phpunit.xsd">
-    <coverage processUncoveredFiles="true">
-        <include>
-            <directory suffix=".php">./src</directory>
-        </include>
-    </coverage>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.4/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         cacheDirectory=".cache/phpunit"
+         executionOrder="depends,defects"
+         beStrictAboutCoverageMetadata="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true">
     <testsuites>
-        <testsuite name="all">
+        <testsuite name="Test Suite">
             <directory>tests/</directory>
         </testsuite>
-        <testsuite name="schema">
-            <file>tests/SchemaTest.php</file>
-        </testsuite>
-        <testsuite name="seeder">
-            <file>tests/SeederTest.php</file>
-        </testsuite>
-        <testsuite name="builder">
-            <file>tests/QueryBuilderTest.php</file>
-            <file>tests/QueryTest.php</file>
-        </testsuite>
-        <testsuite name="transaction">
-            <file>tests/TransactionTest.php</file>
-        </testsuite>
-        <testsuite name="model">
-            <file>tests/ModelTest.php</file>
-            <file>tests/RelationsTest.php</file>
-        </testsuite>
-        <testsuite name="relations">
-            <file>tests/RelationsTest.php</file>
-            <file>tests/EmbeddedRelationsTest.php</file>
-        </testsuite>
-        <testsuite name="mysqlrelations">
-            <file>tests/RelationsTest.php</file>
-        </testsuite>
-        <testsuite name="validation">
-            <file>tests/ValidationTest.php</file>
+        <testsuite name="Documentation">
+            <directory>docs/includes/</directory>
         </testsuite>
     </testsuites>
     <php>
-        <env name="MONGODB_URI" value="mongodb://mongodb/" />
+        <env name="MONGODB_URI" value="mongodb://mongodb/?directConnection=true"/>
         <env name="MONGODB_DATABASE" value="unittest"/>
-        <env name="MYSQL_HOST" value="mysql"/>
-        <env name="MYSQL_PORT" value="3306"/>
-        <env name="MYSQL_DATABASE" value="unittest"/>
-        <env name="MYSQL_USERNAME" value="root"/>
+        <env name="SQLITE_DATABASE" value=":memory:"/>
         <env name="QUEUE_CONNECTION" value="database"/>
+        <ini name="xdebug.mode" value="coverage"/>
+        <ini name="memory_limit" value="-1"/>
     </php>
+
+    <source restrictDeprecations="true"
+        restrictNotices="true"
+        restrictWarnings="true">
+        <include>
+            <directory>./src</directory>
+        </include>
+    </source>
 </phpunit>

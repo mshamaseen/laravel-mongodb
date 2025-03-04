@@ -1,11 +1,19 @@
 <?php
 
-namespace Jenssegers\Mongodb\Relations;
+declare(strict_types=1);
+
+namespace MongoDB\Laravel\Relations;
 
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model as EloquentModel;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo as EloquentBelongsTo;
 
-class BelongsTo extends \Illuminate\Database\Eloquent\Relations\BelongsTo
+/**
+ * @template TRelatedModel of Model
+ * @template TDeclaringModel of Model
+ * @extends EloquentBelongsTo<TRelatedModel, TDeclaringModel>
+ */
+class BelongsTo extends EloquentBelongsTo
 {
     /**
      * Get the key for comparing against the parent key in "has" query.
@@ -14,61 +22,43 @@ class BelongsTo extends \Illuminate\Database\Eloquent\Relations\BelongsTo
      */
     public function getHasCompareKey()
     {
-        return $this->getOwnerKey();
+        return $this->ownerKey;
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function addConstraints()
     {
         if (static::$constraints) {
             // For belongs to relationships, which are essentially the inverse of has one
             // or has many relationships, we need to actually query on the primary key
             // of the related models matching on the foreign key that's on a parent.
-            $this->query->where($this->getOwnerKey(), '=', $this->parent->{$this->foreignKey});
+            $this->query->where($this->ownerKey, '=', $this->parent->{$this->foreignKey});
         }
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function addEagerConstraints(array $models)
     {
         // We'll grab the primary key name of the related models since it could be set to
         // a non-standard name and not "id". We will then construct the constraint for
         // our eagerly loading query so it returns the proper models from execution.
-        $key = $this->getOwnerKey();
-
-        $this->query->whereIn($key, $this->getEagerModelKeys($models));
+        $this->query->whereIn($this->ownerKey, $this->getEagerModelKeys($models));
     }
 
-    /**
-     * @inheritdoc
-     */
+    /** @inheritdoc */
     public function getRelationExistenceQuery(Builder $query, Builder $parentQuery, $columns = ['*'])
     {
         return $query;
     }
 
     /**
-     * Get the owner key with backwards compatible support.
-     *
-     * @return string
-     */
-    public function getOwnerKey()
-    {
-        return property_exists($this, 'ownerKey') ? $this->ownerKey : $this->otherKey;
-    }
-
-    /**
      * Get the name of the "where in" method for eager loading.
      *
-     * @param \Illuminate\Database\Eloquent\Model $model
      * @param string $key
+     *
      * @return string
      */
-    protected function whereInMethod(EloquentModel $model, $key)
+    protected function whereInMethod(Model $model, $key)
     {
         return 'whereIn';
     }
