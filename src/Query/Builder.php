@@ -1659,7 +1659,7 @@ class Builder extends BaseBuilder
         if (is_array($values)) {
             if (array_key_exists('_id', $values) && ! array_key_exists('id', $values)) {
                 $values['id'] = $values['_id'];
-                unset($values['_id']);
+//                unset($values['_id']);
             }
 
             foreach ($values as $key => $value) {
@@ -1675,7 +1675,7 @@ class Builder extends BaseBuilder
         if ($values instanceof stdClass) {
             if (property_exists($values, '_id') && ! property_exists($values, 'id')) {
                 $values->id = $values->_id;
-                unset($values->_id);
+//                unset($values->_id);
             }
 
             foreach (get_object_vars($values) as $key => $value) {
