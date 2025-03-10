@@ -31,6 +31,7 @@ use MongoDB\Driver\Cursor;
 use MongoDB\Driver\ReadPreference;
 use Override;
 use RuntimeException;
+use Shamaseen\Repository\Exceptions\DocumentValidationException;
 use stdClass;
 use TypeError;
 
@@ -751,14 +752,42 @@ class Builder extends BaseBuilder
         return $result->isAcknowledged();
     }
 
-    /** @inheritdoc */
+    /** @inheritdoc
+     * @throws DocumentValidationException
+     * @throws \Exception
+     */
     public function insertGetId(array $values, $sequence = null)
     {
         $options = $this->inheritConnectionOptions();
 
         $values = $this->aliasIdForQuery($values);
 
-        $result = $this->collection->insertOne($values, $options);
+        try {
+            $result = $this->collection->insertOne($values, $options);
+        } catch (\MongoDB\Driver\Exception\BulkWriteException $exception) {
+            if($exception->getMessage() === 'Document failed validation') {
+                $rules = $this->connection->getDatabase()->command([
+                    'listCollections' => 1,
+                    'filter' => [
+                        'name' => $this->from,
+                    ],
+                ])->toArray();
+
+                $required = $rules[0]['options']['validator']['$jsonSchema']['required'] ?? null;
+                if($required) {
+                    $keys = array_keys($values);
+                    $diff = array_diff((array) $required, $keys);
+
+                    if(!empty($diff)) {
+                        throw new DocumentValidationException($exception->getMessage().', missing required keys: '.implode(',', $diff), $values, $rules, 500, $exception);
+                    }
+                }
+
+                throw new DocumentValidationException($exception->getMessage(), $values, $rules, 500, $exception);
+            }
+
+            throw($exception);
+        }
 
         if (! $result->isAcknowledged()) {
             return null;

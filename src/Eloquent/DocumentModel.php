@@ -25,6 +25,11 @@ use MongoDB\BSON\ObjectID;
 use MongoDB\BSON\Type;
 use MongoDB\BSON\UTCDateTime;
 use MongoDB\Laravel\Query\Builder as QueryBuilder;
+use MongoDB\Laravel\Relations\EmbedsMany;
+use MongoDB\Laravel\Relations\EmbedsOne;
+use ReflectionException;
+use ReflectionMethod;
+use ReflectionNamedType;
 use Stringable;
 use ValueError;
 
@@ -55,6 +60,8 @@ trait DocumentModel
 {
     use HybridRelations;
     use EmbedsRelations;
+
+    public static array $embeddedCache = [];
 
     /**
      * The parent relation instance.
@@ -151,7 +158,9 @@ trait DocumentModel
         return new UTCDateTime(Date::now());
     }
 
-    /** @inheritdoc */
+    /** @inheritdoc
+     * @throws ReflectionException
+     */
     public function getAttribute($key)
     {
         if (! $key) {
@@ -173,15 +182,36 @@ trait DocumentModel
         // This checks for embedded relation support.
         // Ignore methods defined in the class Eloquent Model or in this trait.
         if (
-            method_exists($this, $key)
-            && ! method_exists(Model::class, $key)
-            && ! method_exists(DocumentModel::class, $key)
-            && ! $this->hasAttributeGetMutator($key)
+            $this->hasEmbeddedRelation($key)
         ) {
             return $this->getRelationValue($key);
         }
 
         return parent::getAttribute($key);
+    }
+
+    /**
+     * Determine if an attribute is an embedded relation.
+     *
+     * @param string $key
+     * @return bool
+     * @throws ReflectionException
+     */
+    public function hasEmbeddedRelation(string $key): bool
+    {
+        if (! method_exists($this, $method = Str::camel($key))) {
+            return false;
+        }
+
+        if (isset(static::$embeddedCache[get_class($this)][$key])) {
+            return static::$embeddedCache[get_class($this)][$key];
+        }
+
+        $returnType = (new ReflectionMethod($this, $method))->getReturnType();
+
+        return $returnType && static::$embeddedCache[get_class($this)][$key] =
+                $returnType instanceof ReflectionNamedType &&
+                $returnType->getName() === EmbedsOne::class || $returnType->getName() === EmbedsMany::class;
     }
 
     /** @inheritdoc */

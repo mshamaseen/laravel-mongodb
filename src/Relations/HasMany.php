@@ -54,4 +54,13 @@ class HasMany extends EloquentHasMany
     {
         return 'whereIn';
     }
+
+    public function getParentKey()
+    {
+        if($this->localKey === '_id' || $this->localKey === 'id') {
+            return $this->parent->getRawOriginal($this->localKey);
+        }
+
+        return parent::getParentKey();
+    }
 }
