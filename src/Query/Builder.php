@@ -1800,6 +1800,7 @@ class Builder extends BaseBuilder
 
     private function aliasIdForQuery(array $values): array
     {
+        return $values;
         if (array_key_exists('id', $values)) {
             if (array_key_exists('_id', $values) && $values['id'] !== $values['_id']) {
                 throw new InvalidArgumentException('Cannot have both "id" and "_id" fields.');
@@ -1860,6 +1861,8 @@ class Builder extends BaseBuilder
      */
     public function aliasIdForResult(array|object $values): array|object
     {
+        // just ignore this completely
+        return $values;
         if (is_array($values)) {
             if (array_key_exists('_id', $values) && ! array_key_exists('id', $values)) {
                 $values['id'] = $values['_id'];

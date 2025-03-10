@@ -761,9 +761,9 @@ trait DocumentModel
             unset($this->attributes['_id']);
         }
 
-        if (array_key_exists('id', $this->attributes) && $this->attributes['id'] === null) {
-            unset($this->attributes['id']);
-        }
+//        if (array_key_exists('id', $this->attributes) && $this->attributes['id'] === null) {
+//            unset($this->attributes['id']);
+//        }
 
         $saved = parent::save($options);
 
