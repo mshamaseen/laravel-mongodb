@@ -29,12 +29,11 @@ use MongoDB\Builder\Type\QueryInterface;
 use MongoDB\Builder\Type\SearchOperatorInterface;
 use MongoDB\Driver\Cursor;
 use MongoDB\Driver\ReadPreference;
+use MongoDB\Laravel\Exceptions\DocumentValidationException;
 use Override;
 use RuntimeException;
-use Shamaseen\Repository\Exceptions\DocumentValidationException;
 use stdClass;
 use TypeError;
-
 use function array_fill_keys;
 use function array_filter;
 use function array_is_list;
