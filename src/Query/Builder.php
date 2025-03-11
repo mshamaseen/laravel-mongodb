@@ -6,6 +6,7 @@ namespace MongoDB\Laravel\Query;
 
 use ArgumentCountError;
 use BadMethodCallException;
+use Carbon\Carbon;
 use Carbon\CarbonPeriod;
 use Closure;
 use DateTimeInterface;
@@ -13,7 +14,6 @@ use DateTimeZone;
 use Illuminate\Database\Query\Builder as BaseBuilder;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\LazyCollection;
@@ -812,11 +812,11 @@ class Builder extends BaseBuilder
         }
 
         // Since "id" is an alias for "_id", we prevent updating it
-        foreach ($values as $fields) {
-            if (array_key_exists('id', $fields)) {
-                throw new InvalidArgumentException('Cannot update "id" field.');
-            }
-        }
+//        foreach ($values as $fields) {
+//            if (array_key_exists('id', $fields)) {
+//                throw new InvalidArgumentException('Cannot update "id" field.');
+//            }
+//        }
 
         return $this->performUpdate($values, $options);
     }
@@ -1239,9 +1239,9 @@ class Builder extends BaseBuilder
                 $where['column'] = (string) $where['column'];
 
                 // Compatibility with Eloquent queries that uses "id" instead of MongoDB's _id
-                if ($where['column'] === 'id') {
-                    $where['column'] = '_id';
-                }
+//                if ($where['column'] === 'id') {
+//                    $where['column'] = '_id';
+//                }
 
                 // Convert id's.
                 if ($where['column'] === '_id' || str_ends_with($where['column'], '._id')) {
@@ -1261,6 +1261,11 @@ class Builder extends BaseBuilder
                     $where['values']->getStartDate(),
                     $where['values']->getEndDate(),
                 ];
+            }
+
+            // Convert CarbonPeriod to DateTime interval.
+            if (isset($where['value']) && $where['value'] instanceof Carbon) {
+                $where['value'] = new UTCDateTime($where['value']);
             }
 
             // In a sequence of "where" clauses, the logical operator of the

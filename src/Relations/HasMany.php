@@ -57,7 +57,7 @@ class HasMany extends EloquentHasMany
 
     public function getParentKey()
     {
-        if($this->localKey === '_id' || $this->localKey === 'id') {
+        if($this->localKey === '_id') {
             return $this->parent->getRawOriginal($this->localKey);
         }
 
