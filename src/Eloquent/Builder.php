@@ -11,14 +11,14 @@ use MongoDB\BSON\Document;
 use MongoDB\Builder\Type\QueryInterface;
 use MongoDB\Builder\Type\SearchOperatorInterface;
 use MongoDB\Driver\CursorInterface;
-use MongoDB\Driver\Exception\WriteException;
+use MongoDB\Driver\Exception\BulkWriteException;
 use MongoDB\Laravel\Connection;
 use MongoDB\Laravel\Helpers\QueriesRelationships;
 use MongoDB\Laravel\Query\AggregationBuilder;
 use MongoDB\Model\BSONDocument;
 
 use function array_key_exists;
-use function array_merge;
+use function array_replace;
 use function collect;
 use function is_array;
 use function is_object;
@@ -270,7 +270,7 @@ class Builder extends EloquentBuilder
 
         // createOrFirst is not supported in transaction.
         if ($this->getConnection()->getSession()?->isInTransaction()) {
-            return $this->create(array_merge($attributes, $values));
+            return $this->create(array_replace($attributes, $values));
         }
 
         return $this->createOrFirst($attributes, $values);
@@ -284,8 +284,8 @@ class Builder extends EloquentBuilder
         }
 
         try {
-            return $this->create(array_merge($attributes, $values));
-        } catch (WriteException $e) {
+            return $this->create(array_replace($attributes, $values));
+        } catch (BulkWriteException $e) {
             if ($e->getCode() === self::DUPLICATE_KEY_ERROR) {
                 return $this->where($attributes)->first() ?? throw $e;
             }
@@ -309,7 +309,7 @@ class Builder extends EloquentBuilder
         }
 
         $column = $this->model->getUpdatedAtColumn();
-        $values = array_merge(
+        $values = array_replace(
             [$column => $this->model->freshTimestampString()],
             $values,
         );
