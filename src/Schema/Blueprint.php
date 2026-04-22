@@ -7,8 +7,10 @@ namespace MongoDB\Laravel\Schema;
 use Illuminate\Database\Schema\Blueprint as BaseBlueprint;
 use MongoDB\Collection;
 use MongoDB\Laravel\Connection;
+use Override;
 
 use function array_flip;
+use function array_merge;
 use function implode;
 use function in_array;
 use function is_array;
@@ -37,6 +39,7 @@ class Blueprint extends BaseBlueprint
     protected $columns = [];
 
     /** @inheritdoc */
+    #[Override]
     public function index($columns = null, $name = null, $algorithm = null, $options = [])
     {
         $columns = $this->fluent($columns);
@@ -63,12 +66,14 @@ class Blueprint extends BaseBlueprint
     }
 
     /** @inheritdoc */
+    #[Override]
     public function primary($columns = null, $name = null, $algorithm = null, $options = [])
     {
         return $this->unique($columns, $name, $algorithm, $options);
     }
 
     /** @inheritdoc */
+    #[Override]
     public function dropIndex($index = null)
     {
         $index = $this->transformColumns($index);
@@ -117,6 +122,22 @@ class Blueprint extends BaseBlueprint
         return false;
     }
 
+    public function jsonSchema(
+        array $schema = [],
+        ?string $validationLevel = null,
+        ?string $validationAction = null,
+    ): void {
+        $options = array_merge(
+            [
+                'validator' => ['$jsonSchema' => $schema],
+            ],
+            $validationLevel ? ['validationLevel' => $validationLevel] : [],
+            $validationAction ? ['validationAction' => $validationAction] : [],
+        );
+
+        $this->connection->getDatabase()->modifyCollection($this->collection->getCollectionName(), $options);
+    }
+
     /**
      * @param  string|array $indexOrColumns
      *
@@ -151,6 +172,7 @@ class Blueprint extends BaseBlueprint
     }
 
     /** @inheritdoc */
+    #[Override]
     public function unique($columns = null, $name = null, $algorithm = null, $options = [])
     {
         $columns = $this->fluent($columns);
@@ -232,6 +254,7 @@ class Blueprint extends BaseBlueprint
      *
      * @return void
      */
+    #[Override]
     public function create($options = [])
     {
         $collection = $this->collection->getCollectionName();
@@ -243,6 +266,7 @@ class Blueprint extends BaseBlueprint
     }
 
     /** @inheritdoc */
+    #[Override]
     public function drop()
     {
         $this->collection->drop();
@@ -251,6 +275,7 @@ class Blueprint extends BaseBlueprint
     }
 
     /** @inheritdoc */
+    #[Override]
     public function renameColumn($from, $to)
     {
         $this->collection->updateMany([$from => ['$exists' => true]], ['$rename' => [$from => $to]]);
@@ -259,6 +284,7 @@ class Blueprint extends BaseBlueprint
     }
 
     /** @inheritdoc */
+    #[Override]
     public function addColumn($type, $name, array $parameters = [])
     {
         $this->fluent($name);

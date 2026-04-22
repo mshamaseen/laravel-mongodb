@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\LazyCollection;
 use Laravel\Scout\ScoutServiceProvider;
 use LogicException;
+use MongoDB\Laravel\Tests\AtlasSearchIndexManagement;
 use MongoDB\Laravel\Tests\Scout\Models\ScoutUser;
 use MongoDB\Laravel\Tests\Scout\Models\SearchableInSameNamespace;
 use MongoDB\Laravel\Tests\TestCase;
@@ -17,6 +18,7 @@ use PHPUnit\Framework\Attributes\Group;
 use function array_merge;
 use function count;
 use function env;
+use function hrtime;
 use function iterator_to_array;
 use function Orchestra\Testbench\artisan;
 use function range;
@@ -26,6 +28,8 @@ use function usleep;
 #[Group('atlas-search')]
 class ScoutIntegrationTest extends TestCase
 {
+    use AtlasSearchIndexManagement;
+
     #[Override]
     protected function getPackageProviders($app): array
     {
@@ -96,14 +100,17 @@ class ScoutIntegrationTest extends TestCase
     /** This test create the search index for tests performing search */
     public function testItCanCreateTheCollection()
     {
+        $this->skipIfSearchIndexManagementIsNotSupported();
+
         $collection = DB::connection('mongodb')->getCollection('prefix_scout_users');
         $collection->drop();
+        $this->waitForSearchIndexesDropped($collection);
 
         // Recreate the indexes using the artisan commands
         // Ensure they return a success exit code (0)
         self::assertSame(0, artisan($this, 'scout:delete-index', ['name' => ScoutUser::class]));
-        self::assertSame(0, artisan($this, 'scout:index', ['name' => ScoutUser::class]));
         self::assertSame(0, artisan($this, 'scout:import', ['model' => ScoutUser::class]));
+        self::assertSame(0, artisan($this, 'scout:index', ['name' => ScoutUser::class]));
 
         self::assertSame(44, $collection->countDocuments());
 
@@ -111,8 +118,10 @@ class ScoutIntegrationTest extends TestCase
         self::assertCount(1, $searchIndexes);
         self::assertSame(['mappings' => ['dynamic' => true, 'fields' => ['bool_field' => ['type' => 'boolean']]]], iterator_to_array($searchIndexes)[0]['latestDefinition']);
 
+        $this->waitForSearchIndexesReady($collection);
+
         // Wait for all documents to be indexed asynchronously
-        $i = 100;
+        $timeout = hrtime()[0] + 30;
         while (true) {
             $indexedDocuments = $collection->aggregate([
                 ['$search' => ['index' => 'scout', 'exists' => ['path' => 'name']]],
@@ -122,11 +131,11 @@ class ScoutIntegrationTest extends TestCase
                 break;
             }
 
-            if ($i-- === 0) {
-                self::fail('Documents not indexed');
+            if (hrtime()[0] > $timeout) {
+                self::fail('Timed out waiting for documents to be indexed');
             }
 
-            usleep(100_000);
+            usleep(1000);
         }
 
         self::assertCount(44, $indexedDocuments);
@@ -135,7 +144,7 @@ class ScoutIntegrationTest extends TestCase
     #[Depends('testItCanCreateTheCollection')]
     public function testItCanUseBasicSearch()
     {
-        // All the search queries use "sort" option to ensure the results are deterministic
+        // All the search queries use the "sort" option to ensure the results are deterministic
         $results = ScoutUser::search('lar')->take(10)->orderBy('id')->get();
 
         self::assertSame([

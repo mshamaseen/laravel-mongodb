@@ -97,10 +97,7 @@ final class MongoStore implements LockProvider, Store
                     'expires_at' => $this->getUTCDateTime($seconds),
                 ],
             ],
-            [
-                'upsert' => true,
-
-            ],
+            ['upsert' => true],
         );
 
         return $result->getUpsertedCount() > 0 || $result->getModifiedCount() > 0;
@@ -259,6 +256,27 @@ final class MongoStore implements LockProvider, Store
         ]);
 
         return $result->getDeletedCount() > 0;
+    }
+
+    /**
+     * Extend the expiration time of an item in the cache.
+     *
+     * @param string $key
+     * @param int    $seconds
+     */
+    public function touch($key, $seconds): bool
+    {
+        $result = $this->collection->updateOne(
+            [
+                '_id' => $this->prefix . $key,
+                'expires_at' => ['$gt' => $this->getUTCDateTime()],
+            ],
+            [
+                '$set' => ['expires_at' => $this->getUTCDateTime($seconds)],
+            ],
+        );
+
+        return $result->getModifiedCount() > 0;
     }
 
     public function flush(): bool

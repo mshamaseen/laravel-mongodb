@@ -8,20 +8,17 @@ use Illuminate\Database\Eloquent\Model;
 use MongoDB\Laravel\Eloquent\DocumentModel;
 
 /**
+ * @property string $id
  * @property string $name
- * @property string $country
- * @property bool $can_be_eaten
  */
-final class HiddenAnimal extends Model
+class NonIncrementing extends Model
 {
     use DocumentModel;
 
     protected $keyType = 'string';
-    protected $fillable = [
-        'name',
-        'country',
-        'can_be_eaten',
-    ];
+    protected $connection = 'mongodb';
 
-    protected $hidden = ['country'];
+    protected $fillable = ['name'];
+    protected static $unguarded = true;
+    public $incrementing = false;
 }

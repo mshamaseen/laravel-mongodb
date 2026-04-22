@@ -12,10 +12,11 @@ changelog:
     - title: New Features
       labels:
         - enhancement
+        - feature
     - title: Fixed
       labels:
         - bug
         - fixed
     - title: Other Changes
       labels:
-        - "*"
+        - '*'

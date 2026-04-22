@@ -60,9 +60,7 @@ final class ScoutEngine extends Engine
     private const WAIT_TIMEOUT_SEC = 300;
 
     private const DEFAULT_DEFINITION = [
-        'mappings' => [
-            'dynamic' => true,
-        ],
+        'mappings' => ['dynamic' => true],
     ];
 
     private const TYPEMAP = ['root' => 'object', 'document' => 'bson', 'array' => 'bson'];
@@ -128,11 +126,9 @@ final class ScoutEngine extends Engine
             $bulk[] = [
                 'updateOne' => [
                     ['_id' => $model->getScoutKey()],
-                    [
-                        // The _id field is added automatically when the document is inserted
-                        // Update all other fields
-                        '$set' => $searchableData,
-                    ],
+                    // The _id field is added automatically when the document is inserted
+                    // Update all other fields
+                    ['$set' => $searchableData],
                     ['upsert' => true],
                 ],
             ];
@@ -151,7 +147,7 @@ final class ScoutEngine extends Engine
     #[Override]
     public function delete($models): void
     {
-        assert($models instanceof EloquentCollection, new TypeError(sprintf('Argument #1 ($models) must be of type %s, %s given', Collection::class, get_debug_type($models))));
+        assert($models instanceof EloquentCollection, new TypeError(sprintf('Argument #1 ($models) must be of type %s, %s given', EloquentCollection::class, get_debug_type($models))));
 
         if ($models->isEmpty()) {
             return;
@@ -280,10 +276,8 @@ final class ScoutEngine extends Engine
                 ],
             ],
             [
-                '$addFields' => [
-                    // Metadata field with the total count of documents
-                    '__count' => '$$SEARCH_META.count.lowerBound',
-                ],
+                // Metadata field with the total count of documents
+                '$addFields' => ['__count' => '$$SEARCH_META.count.lowerBound'],
             ],
         ];
 

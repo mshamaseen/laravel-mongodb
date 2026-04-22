@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace MongoDB\Laravel\Eloquent;
 
+use Closure;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use MongoDB\BSON\Document;
+use MongoDB\Builder\Expression;
 use MongoDB\Builder\Type\QueryInterface;
 use MongoDB\Builder\Type\SearchOperatorInterface;
 use MongoDB\Driver\CursorInterface;
@@ -16,14 +18,17 @@ use MongoDB\Laravel\Connection;
 use MongoDB\Laravel\Helpers\QueriesRelationships;
 use MongoDB\Laravel\Query\AggregationBuilder;
 use MongoDB\Model\BSONDocument;
+use Override;
 
 use function array_key_exists;
+use function array_map;
 use function array_replace;
 use function collect;
 use function is_array;
 use function is_object;
 use function iterator_to_array;
 use function property_exists;
+use function value;
 
 /**
  * @method \MongoDB\Laravel\Query\Builder toBase()
@@ -66,7 +71,7 @@ class Builder extends EloquentBuilder
     ];
 
     /**
-     * @return ($function is null ? AggregationBuilder : self)
+     * @return ($function is null ? AggregationBuilder : $this)
      *
      * @inheritdoc
      */
@@ -124,7 +129,12 @@ class Builder extends EloquentBuilder
         return $this->model->hydrate($results->all());
     }
 
-    /** @inheritdoc */
+    /**
+     * @param array $options
+     *
+     * @inheritdoc
+     */
+    #[Override]
     public function update(array $values, array $options = [])
     {
         // Intercept operations on embedded models and delegate logic
@@ -228,7 +238,13 @@ class Builder extends EloquentBuilder
         return parent::decrement($column, $amount, $extra);
     }
 
-    /** @inheritdoc */
+    /**
+     * @param (Closure():T)|Expression|null $value
+     *
+     * @return ($value is Closure ? T : ($value is null ? Collection : Expression))
+     *
+     * @template T
+     */
     public function raw($value = null)
     {
         // Get raw results from the query builder.
@@ -237,7 +253,7 @@ class Builder extends EloquentBuilder
         // Convert MongoCursor results to a collection of models.
         if ($results instanceof CursorInterface) {
             $results->setTypeMap(['root' => 'array', 'document' => 'array', 'array' => 'array']);
-            $results = $this->query->aliasIdForResult(iterator_to_array($results));
+            $results = array_map(fn ($document) => $this->query->aliasIdForResult($document), iterator_to_array($results));
 
             return $this->model->hydrate($results);
         }
@@ -261,7 +277,8 @@ class Builder extends EloquentBuilder
         return $results;
     }
 
-    public function firstOrCreate(array $attributes = [], array $values = [])
+    #[Override]
+    public function firstOrCreate(array $attributes = [], Closure|array $values = [])
     {
         $instance = (clone $this)->where($attributes)->first();
         if ($instance !== null) {
@@ -270,13 +287,14 @@ class Builder extends EloquentBuilder
 
         // createOrFirst is not supported in transaction.
         if ($this->getConnection()->getSession()?->isInTransaction()) {
-            return $this->create(array_replace($attributes, $values));
+            return $this->create(array_replace($attributes, value($values)));
         }
 
         return $this->createOrFirst($attributes, $values);
     }
 
-    public function createOrFirst(array $attributes = [], array $values = [])
+    #[Override]
+    public function createOrFirst(array $attributes = [], Closure|array $values = [])
     {
         // The duplicate key error would abort the transaction. Using the regular firstOrCreate in that case.
         if ($this->getConnection()->getSession()?->isInTransaction()) {
@@ -284,7 +302,7 @@ class Builder extends EloquentBuilder
         }
 
         try {
-            return $this->create(array_replace($attributes, $values));
+            return $this->create(array_replace($attributes, value($values)));
         } catch (BulkWriteException $e) {
             if ($e->getCode() === self::DUPLICATE_KEY_ERROR) {
                 return $this->where($attributes)->first() ?? throw $e;
@@ -299,9 +317,8 @@ class Builder extends EloquentBuilder
      * TODO Remove if https://github.com/laravel/framework/commit/6484744326531829341e1ff886cc9b628b20d73e
      * will be reverted
      * Issue in laravel/frawework https://github.com/laravel/framework/issues/27791.
-     *
-     * @return array
      */
+    #[Override]
     protected function addUpdatedAtColumn(array $values)
     {
         if (! $this->model->usesTimestamps() || $this->model->getUpdatedAtColumn() === null) {
@@ -309,6 +326,10 @@ class Builder extends EloquentBuilder
         }
 
         $column = $this->model->getUpdatedAtColumn();
+        if (isset($values['$set'][$column])) {
+            return $values;
+        }
+
         $values = array_replace(
             [$column => $this->model->freshTimestampString()],
             $values,
@@ -323,6 +344,7 @@ class Builder extends EloquentBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     protected function ensureOrderForCursorPagination($shouldReverse = false)
     {
         if (empty($this->query->orders)) {

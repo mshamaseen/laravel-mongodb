@@ -13,6 +13,7 @@ use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Tests\Bus\BusBatchTest;
 use Mockery as m;
+use MongoDB\BSON\ObjectId;
 use MongoDB\Laravel\Bus\MongoBatchRepository;
 use MongoDB\Laravel\Connection;
 use MongoDB\Laravel\Tests\Bus\Fixtures\ChainHeadJob;
@@ -327,6 +328,48 @@ final class MongoBatchRepositoryTest extends TestCase
         $this->assertIsString($secondJob->batchId);
         $this->assertIsString($thirdJob->batchId);
         $this->assertInstanceOf(CarbonImmutable::class, $batch->createdAt);
+    }
+
+    /** @see https://github.com/mongodb/laravel-mongodb/issues/3488 */
+    public function testRollBackWithoutSessionIsNoOp(): void
+    {
+        $connection = DB::connection('mongodb');
+        $this->assertInstanceOf(Connection::class, $connection);
+        $this->assertNull($connection->getSession());
+
+        $repository = new MongoBatchRepository(new BatchFactory(m::mock(Factory::class)), $connection, 'job_batches');
+
+        // Should not throw even when there is no active MongoDB session or transaction
+        $repository->rollBack();
+        $this->assertNull($connection->getSession());
+    }
+
+    /** @see MongoBatchRepository::cancel() */
+    public function testCancelSetsSameTimestampForCancelledAtAndFinishedAt(): void
+    {
+        $queue = m::mock(Factory::class);
+        $batch = $this->createTestBatch($queue);
+
+        $batch->cancel();
+
+        $connection = DB::connection('mongodb');
+        $raw = $connection->getCollection('job_batches')->findOne(
+            ['_id' => new ObjectId((string) $batch->id)],
+            ['typeMap' => ['root' => 'array', 'document' => 'array', 'array' => 'array']],
+        );
+
+        $this->assertNotNull($raw['cancelled_at']);
+        $this->assertNotNull($raw['finished_at']);
+
+        // Convert BSON UTCDateTime to milliseconds string for reliable comparison
+        $cancelledAtMs = (string) $raw['cancelled_at'];
+        $finishedAtMs = (string) $raw['finished_at'];
+
+        $this->assertEquals(
+            $cancelledAtMs,
+            $finishedAtMs,
+            'The cancelled_at and finished_at timestamps should be identical.',
+        );
     }
 
     /** @see BusBatchTest::createTestBatch() */

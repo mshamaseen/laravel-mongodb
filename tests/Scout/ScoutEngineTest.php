@@ -21,6 +21,7 @@ use MongoDB\Laravel\Tests\Scout\Models\ScoutUser;
 use MongoDB\Laravel\Tests\Scout\Models\SearchableModel;
 use MongoDB\Laravel\Tests\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
+use TypeError;
 
 use function array_replace_recursive;
 use function count;
@@ -46,9 +47,7 @@ class ScoutEngineTest extends TestCase
     {
         $collectionName = 'collection_custom';
         $expectedDefinition = [
-            'mappings' => [
-                'dynamic' => true,
-            ],
+            'mappings' => ['dynamic' => true],
         ];
 
         $database = $this->createMock(Database::class);
@@ -169,15 +168,11 @@ class ScoutEngineTest extends TestCase
                         ],
                         'minimumShouldMatch' => 1,
                     ],
-                    'count' => [
-                        'type' => 'lowerBound',
-                    ],
+                    'count' => ['type' => 'lowerBound'],
                 ],
             ],
             [
-                '$addFields' => [
-                    '__count' => '$$SEARCH_META.count.lowerBound',
-                ],
+                '$addFields' => ['__count' => '$$SEARCH_META.count.lowerBound'],
             ],
         ];
 
@@ -449,25 +444,17 @@ class ScoutEngineTest extends TestCase
                                 ],
                                 'minimumShouldMatch' => 1,
                             ],
-                            'count' => [
-                                'type' => 'lowerBound',
-                            ],
+                            'count' => ['type' => 'lowerBound'],
                             'sort' => [
                                 'name' => -1,
                             ],
                         ],
                     ],
                     [
-                        '$addFields' => [
-                            '__count' => '$$SEARCH_META.count.lowerBound',
-                        ],
+                        '$addFields' => ['__count' => '$$SEARCH_META.count.lowerBound'],
                     ],
-                    [
-                        '$skip' => 10,
-                    ],
-                    [
-                        '$limit' => 5,
-                    ],
+                    ['$skip' => 10],
+                    ['$limit' => 5],
                 ], $args[0]);
 
                 return $cursor;
@@ -596,9 +583,7 @@ class ScoutEngineTest extends TestCase
                 'id' => 1,
                 'date' => $date,
             ]),
-            new SearchableModel([
-                'id' => 2,
-            ]),
+            new SearchableModel(['id' => 2]),
         ]));
     }
 
@@ -669,5 +654,18 @@ class ScoutEngineTest extends TestCase
 
         $engine = new ScoutEngine($database, softDelete: false);
         $engine->delete($job->models);
+    }
+
+    public function testDeleteRejectsNonEloquentCollection(): void
+    {
+        $database = $this->createMock(Database::class);
+        $engine = new ScoutEngine($database, softDelete: false);
+
+        $this->expectException(TypeError::class);
+        $this->expectExceptionMessage(
+            'Argument #1 ($models) must be of type Illuminate\Database\Eloquent\Collection',
+        );
+
+        $engine->delete(LaravelCollection::make([1, 2, 3]));
     }
 }

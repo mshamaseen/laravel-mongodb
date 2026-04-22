@@ -12,7 +12,6 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Tests\Database\DatabaseQueryBuilderTest;
 use InvalidArgumentException;
 use LogicException;
-use Mockery as m;
 use MongoDB\BSON\Regex;
 use MongoDB\BSON\UTCDateTime;
 use MongoDB\Driver\ReadPreference;
@@ -39,7 +38,7 @@ class BuilderTest extends TestCase
             $this->markTestSkipped(sprintf('Method "%s::%s()" does not exist.', Builder::class, $requiredMethod));
         }
 
-        $builder = $build(self::getBuilder());
+        $builder = $build($this->getBuilder());
         $this->assertInstanceOf(Builder::class, $builder);
         $mql = $builder->toMql();
 
@@ -532,6 +531,36 @@ class BuilderTest extends TestCase
                 ->orderBy('age', 1),
         ];
 
+        yield 'chunked ordering' => [
+            [
+                'find' => [
+                    ['_id' => ['$gt' => 0]],
+                    ['sort' => ['_id' => 1, 'name' => 1], 'limit' => 2],
+                ],
+            ],
+            function (Builder $builder) {
+                $builder->orderBy('_id')->orderBy('name');
+                $builder->forPageAfterId(2);
+
+                return $builder;
+            },
+        ];
+
+        yield 'chunked ordering with id alias' => [
+            [
+                'find' => [
+                    ['_id' => ['$gt' => 0]],
+                    ['sort' => ['_id' => 1, 'name' => 1], 'limit' => 2],
+                ],
+            ],
+            function (Builder $builder) {
+                $builder->orderBy('id')->orderBy('name');
+                $builder->forPageAfterId(2);
+
+                return $builder;
+            },
+        ];
+
         yield 'orderByDesc' => [
             ['find' => [[], ['sort' => ['email' => -1]]]],
             fn (Builder $builder) => $builder->orderByDesc('email'),
@@ -869,7 +898,7 @@ class BuilderTest extends TestCase
                     [],
                 ],
             ],
-            fn (Builder $builder) => $builder->whereDate('created_at', '=', new DateTimeImmutable('2018-09-30 15:00:00 +02:00')),
+            fn (Builder $builder) => $builder->whereDate('created_at', '=', new DateTimeImmutable('2018-09-30 15:00:00 +00:00')),
         ];
 
         yield 'where date !=' => [
@@ -1439,15 +1468,15 @@ class BuilderTest extends TestCase
         ];
 
         yield 'timeout' => [
-            ['find' => [[], ['maxTimeMS' => 2345]]],
-            fn (Builder $builder) => $builder->timeout(2.3456),
+            ['find' => [[], ['maxTimeMS' => 2000]]],
+            fn (Builder $builder) => $builder->timeout(2),
         ];
     }
 
     #[DataProvider('provideExceptions')]
     public function testException($class, $message, Closure $build): void
     {
-        $builder = self::getBuilder();
+        $builder = $this->getBuilder();
 
         $this->expectException($class);
         $this->expectExceptionMessage($message);
@@ -1545,7 +1574,7 @@ class BuilderTest extends TestCase
     #[DataProvider('getEloquentMethodsNotSupported')]
     public function testEloquentMethodsNotSupported(Closure $callback)
     {
-        $builder = self::getBuilder();
+        $builder = $this->getBuilder();
 
         $this->expectException(BadMethodCallException::class);
         $this->expectExceptionMessage('This method is not supported by MongoDB');
@@ -1600,12 +1629,95 @@ class BuilderTest extends TestCase
         yield 'orWhereIntegerNotInRaw' => [fn (Builder $builder) => $builder->orWhereIntegerNotInRaw('id', ['1a', 2])];
     }
 
-    private static function getBuilder(): Builder
+    #[DataProvider('provideDisableRenameEmbeddedIdField')]
+    public function testDisableRenameEmbeddedIdField(array $expected, Closure $build)
     {
-        $connection = m::mock(Connection::class);
-        $processor  = m::mock(Processor::class);
-        $connection->shouldReceive('getSession')->andReturn(null);
-        $connection->shouldReceive('getQueryGrammar')->andReturn(new Grammar($connection));
+        $builder = $this->getBuilder(false);
+        $this->assertFalse($builder->getConnection()->getRenameEmbeddedIdField());
+
+        $mql = $build($builder)->toMql();
+
+        $this->assertEquals($expected, $mql);
+    }
+
+    public static function provideDisableRenameEmbeddedIdField()
+    {
+        yield 'rename embedded id field' => [
+            [
+                'find' => [
+                    [
+                        '$and' => [
+                            ['_id' => 10],
+                            ['nested.id' => 20],
+                            ['embed' => ['id' => 30]],
+                        ],
+                    ],
+                    ['typeMap' => ['root' => 'object', 'document' => 'array']],
+                ],
+            ],
+            fn (Builder $builder) => $builder->where('id', '=', 10)
+                ->where('nested.id', '=', 20)
+                ->where('embed', '=', ['id' => 30]),
+        ];
+
+        yield 'rename root id' => [
+            ['find' => [['_id' => 10], ['typeMap' => ['root' => 'object', 'document' => 'array']]]],
+            fn (Builder $builder) => $builder->where('id', '=', 10),
+        ];
+
+        yield 'nested id not renamed' => [
+            ['find' => [['nested.id' => 20], ['typeMap' => ['root' => 'object', 'document' => 'array']]]],
+            fn (Builder $builder) => $builder->where('nested.id', '=', 20),
+        ];
+
+        yield 'embed id not renamed' => [
+            ['find' => [['embed' => ['id' => 30]], ['typeMap' => ['root' => 'object', 'document' => 'array']]]],
+            fn (Builder $builder) => $builder->where('embed', '=', ['id' => 30]),
+        ];
+
+        yield 'nested $and in $or' => [
+            [
+                'find' => [
+                    [
+                        '$or' => [
+                            [
+                                '$and' => [
+                                    ['_id' => 10],
+                                    ['nested.id' => 20],
+                                    ['embed' => ['id' => 30]],
+                                ],
+                            ],
+                            [
+                                '$and' => [
+                                    ['_id' => 40],
+                                    ['nested.id' => 50],
+                                    ['embed' => ['id' => 60]],
+                                ],
+                            ],
+                        ],
+                    ],
+                    ['typeMap' => ['root' => 'object', 'document' => 'array']],
+                ],
+            ],
+            fn (Builder $builder) => $builder->orWhere(function (Builder $builder) {
+                return $builder->where('id', '=', 10)
+                    ->where('nested.id', '=', 20)
+                    ->where('embed', '=', ['id' => 30]);
+            })->orWhere(function (Builder $builder) {
+                return $builder->where('id', '=', 40)
+                    ->where('nested.id', '=', 50)
+                    ->where('embed', '=', ['id' => 60]);
+            }),
+        ];
+    }
+
+    private function getBuilder(bool $renameEmbeddedIdField = true): Builder
+    {
+        $connection = $this->createStub(Connection::class);
+        $connection->method('getRenameEmbeddedIdField')->willReturn($renameEmbeddedIdField);
+        $processor  = $this->createStub(Processor::class);
+        $connection->method('getSession')->willReturn(null);
+        $connection->method('getQueryGrammar')->willReturn(new Grammar($connection));
 
         return new Builder($connection, null, $processor);
     }

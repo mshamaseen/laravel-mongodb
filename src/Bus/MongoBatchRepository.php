@@ -107,9 +107,7 @@ class MongoBatchRepository extends DatabaseBatchRepository implements PrunableBa
                     'total_jobs' => $amount,
                     'pending_jobs' => $amount,
                 ],
-                '$set' => [
-                    'finished_at' => null,
-                ],
+                '$set' => ['finished_at' => null],
             ],
         );
     }
@@ -172,12 +170,14 @@ class MongoBatchRepository extends DatabaseBatchRepository implements PrunableBa
     public function cancel(string $batchId): void
     {
         $batchId = new ObjectId($batchId);
+
+        $now = $this->getUTCDateTime();
         $this->collection->updateOne(
             ['_id' => $batchId],
             [
                 '$set' => [
-                    'cancelled_at' => $this->getUTCDateTime(),
-                    'finished_at' => $this->getUTCDateTime(),
+                    'cancelled_at' => $now,
+                    'finished_at' => $now,
                 ],
             ],
         );
@@ -201,6 +201,10 @@ class MongoBatchRepository extends DatabaseBatchRepository implements PrunableBa
     #[Override]
     public function rollBack(): void
     {
+        if (! $this->connection->getSession()?->isInTransaction()) {
+            return;
+        }
+
         $this->connection->rollBack();
     }
 
@@ -216,6 +220,7 @@ class MongoBatchRepository extends DatabaseBatchRepository implements PrunableBa
     }
 
     /** Prune all the unfinished entries older than the given date. */
+    #[Override]
     public function pruneUnfinished(DateTimeInterface $before): int
     {
         $result = $this->collection->deleteMany(
@@ -229,6 +234,7 @@ class MongoBatchRepository extends DatabaseBatchRepository implements PrunableBa
     }
 
     /** Prune all the cancelled entries older than the given date. */
+    #[Override]
     public function pruneCancelled(DateTimeInterface $before): int
     {
         $result = $this->collection->deleteMany(

@@ -23,8 +23,9 @@ use MongoDB\Laravel\Cache\MongoStore;
 use MongoDB\Laravel\Eloquent\Model;
 use MongoDB\Laravel\Queue\MongoConnector;
 use MongoDB\Laravel\Scout\ScoutEngine;
+use MongoDB\Laravel\Session\MongoDbSessionHandler;
+use Override;
 use RuntimeException;
-use Symfony\Component\HttpFoundation\Session\Storage\Handler\MongoDbSessionHandler;
 
 use function assert;
 use function class_exists;
@@ -47,6 +48,7 @@ class MongoDBServiceProvider extends ServiceProvider
     /**
      * Register the service provider.
      */
+    #[Override]
     public function register()
     {
         // Add database driver.
@@ -67,12 +69,10 @@ class MongoDBServiceProvider extends ServiceProvider
                 assert($connection instanceof Connection, new InvalidArgumentException(sprintf('The database connection "%s" used for the session does not use the "mongodb" driver.', $connectionName)));
 
                 return new MongoDbSessionHandler(
-                    $connection->getClient(),
-                    $app->config->get('session.options', []) + [
-                        'database' => $connection->getDatabaseName(),
-                        'collection' => $app->config->get('session.table') ?: 'sessions',
-                        'ttl' => $app->config->get('session.lifetime'),
-                    ],
+                    $connection,
+                    $app->config->get('session.table', 'sessions'),
+                    $app->config->get('session.lifetime'),
+                    $app,
                 );
             });
         });
@@ -112,7 +112,7 @@ class MongoDBServiceProvider extends ServiceProvider
     {
         // GridFS adapter for filesystem
         $this->app->resolving('filesystem', static function (FilesystemManager $filesystemManager) {
-            $filesystemManager->extend('gridfs', static function (Application $app, array $config) {
+            $filesystemManager->extend('gridfs', function (Application $app, array $config) {
                 if (! class_exists(GridFSAdapter::class)) {
                     throw new RuntimeException('GridFS adapter for Flysystem is missing. Try running "composer require league/flysystem-gridfs"');
                 }

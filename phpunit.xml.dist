@@ -12,17 +12,15 @@
         <testsuite name="Test Suite">
             <directory>tests/</directory>
         </testsuite>
-        <testsuite name="Documentation">
-            <directory>docs/includes/</directory>
-        </testsuite>
     </testsuites>
     <php>
         <env name="MONGODB_URI" value="mongodb://mongodb/?directConnection=true"/>
         <env name="MONGODB_DATABASE" value="unittest"/>
         <env name="SQLITE_DATABASE" value=":memory:"/>
         <env name="QUEUE_CONNECTION" value="database"/>
-        <ini name="xdebug.mode" value="coverage"/>
         <ini name="memory_limit" value="-1"/>
+        <!-- Evaluate assertions, requires running with "php -d zend.assertions=1 vendor/bin/phpunit" -->
+        <!-- <ini name="zend.assertions=1" value="1" /> -->
     </php>
 
     <source restrictDeprecations="true"

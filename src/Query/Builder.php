@@ -30,6 +30,7 @@ use MongoDB\Builder\Type\SearchOperatorInterface;
 use MongoDB\Driver\Cursor;
 use MongoDB\Driver\ReadPreference;
 use MongoDB\Laravel\Exceptions\DocumentValidationException;
+use MongoDB\Laravel\Connection;
 use Override;
 use RuntimeException;
 use stdClass;
@@ -38,6 +39,7 @@ use function array_fill_keys;
 use function array_filter;
 use function array_is_list;
 use function array_key_exists;
+use function array_keys;
 use function array_map;
 use function array_merge;
 use function array_replace;
@@ -83,8 +85,11 @@ use function substr;
 use function trait_exists;
 use function var_export;
 
+/** @property Connection $connection */
 class Builder extends BaseBuilder
 {
+    use BuilderTimeout;
+
     private const REGEX_DELIMITERS = ['/', '#', '~'];
 
     /**
@@ -100,13 +105,6 @@ class Builder extends BaseBuilder
      * @var array
      */
     public $projections = [];
-
-    /**
-     * The maximum amount of seconds to allow the query to run.
-     *
-     * @var int|float
-     */
-    public $timeout;
 
     /**
      * The cursor hint value.
@@ -213,20 +211,6 @@ class Builder extends BaseBuilder
     }
 
     /**
-     * The maximum amount of seconds to allow the query to run.
-     *
-     * @param  int|float $seconds
-     *
-     * @return $this
-     */
-    public function timeout($seconds)
-    {
-        $this->timeout = $seconds;
-
-        return $this;
-    }
-
-    /**
      * Set the cursor hint.
      *
      * @param  mixed $index
@@ -241,12 +225,14 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function find($id, $columns = [])
     {
         return $this->where('_id', '=', $this->convertKey($id))->first($columns);
     }
 
     /** @inheritdoc */
+    #[Override]
     public function value($column)
     {
         $result = (array) $this->first([$column]);
@@ -255,12 +241,14 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function get($columns = [])
     {
         return $this->getFresh($columns);
     }
 
     /** @inheritdoc */
+    #[Override]
     public function cursor($columns = [])
     {
         $result = $this->getFresh($columns, true);
@@ -577,6 +565,7 @@ class Builder extends BaseBuilder
     }
 
     /** @return ($function is null ? AggregationBuilder : mixed) */
+    #[Override]
     public function aggregate($function = null, $columns = ['*'])
     {
         assert(is_array($columns), new TypeError(sprintf('Argument #2 ($columns) must be of type array, %s given', get_debug_type($columns))));
@@ -638,9 +627,10 @@ class Builder extends BaseBuilder
     }
 
     /**
-     * {@inheritDoc}
+     * @param string $function
+     * @param array  $columns
      *
-     * @see \Illuminate\Database\Query\Builder::aggregateByGroup()
+     * @return mixed
      */
     public function aggregateByGroup(string $function, array $columns = ['*'])
     {
@@ -652,6 +642,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function exists()
     {
         return $this->first(['id']) !== null;
@@ -674,6 +665,7 @@ class Builder extends BaseBuilder
      *
      * @inheritdoc
      */
+    #[Override]
     public function orderBy($column, $direction = 'asc')
     {
         if (is_string($direction)) {
@@ -694,7 +686,35 @@ class Builder extends BaseBuilder
         return $this;
     }
 
+    /**
+     * Override Illuminate's removeExistingOrdersFor to support associative order storage used by MongoDB.
+     *
+     * @inheritdoc
+     */
+    #[Override]
+    protected function removeExistingOrdersFor($column): array
+    {
+        $orders = $this->orders ?? [];
+
+        $toUnset = array_filter(
+            array_keys($orders),
+            function ($orderColumn) use ($column) {
+                return $orderColumn === $column
+                    || ($orderColumn === 'id' && $column === '_id')
+                    || ($orderColumn === '_id' && $column === 'id'
+                );
+            },
+        );
+
+        foreach ($toUnset as $column) {
+            unset($orders[$column]);
+        }
+
+        return $orders;
+    }
+
     /** @inheritdoc */
+    #[Override]
     public function whereBetween($column, iterable $values, $boolean = 'and', $not = false)
     {
         $type = 'between';
@@ -719,6 +739,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function insert(array $values)
     {
         // Allow empty insert batch for consistency with Eloquent SQL
@@ -743,7 +764,10 @@ class Builder extends BaseBuilder
             $values = [$values];
         }
 
-        $values = $this->aliasIdForQuery($values);
+        $values = array_map(
+            $this->aliasIdForQuery(...),
+            $values,
+        );
 
         $options = $this->inheritConnectionOptions();
 
@@ -752,10 +776,12 @@ class Builder extends BaseBuilder
         return $result->isAcknowledged();
     }
 
-    /** @inheritdoc
+    /**
+     * @inheritdoc
      * @throws DocumentValidationException
      * @throws \Exception
      */
+    #[Override]
     public function insertGetId(array $values, $sequence = null)
     {
         $options = $this->inheritConnectionOptions();
@@ -800,6 +826,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function update(array $values, array $options = [])
     {
         // Use $set as default operator for field names that are not in an operator
@@ -823,6 +850,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function upsert(array $values, $uniqueBy, $update = null): int
     {
         if ($values === []) {
@@ -869,6 +897,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function increment($column, $amount = 1, array $extra = [], array $options = [])
     {
         $query = ['$inc' => [(string) $column => $amount]];
@@ -889,6 +918,12 @@ class Builder extends BaseBuilder
         return $this->performUpdate($query, $options);
     }
 
+    /**
+     * @param array $options
+     *
+     * @inheritdoc
+     */
+    #[Override]
     public function incrementEach(array $columns, array $extra = [], array $options = [])
     {
         $stage['$addFields'] = $extra;
@@ -906,12 +941,14 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function decrement($column, $amount = 1, array $extra = [], array $options = [])
     {
         return $this->increment($column, -1 * $amount, $extra, $options);
     }
 
     /** @inheritdoc */
+    #[Override]
     public function decrementEach(array $columns, array $extra = [], array $options = [])
     {
         $decrement = [];
@@ -923,7 +960,49 @@ class Builder extends BaseBuilder
         return $this->incrementEach($decrement, $extra, $options);
     }
 
+    /**
+     * Multiply a column's value by a given amount.
+     *
+     * @param  string    $column
+     * @param  float|int $amount
+     *
+     * @return int
+     */
+    public function multiply($column, $amount, array $extra = [], array $options = [])
+    {
+        $query = ['$mul' => [(string) $column => $amount]];
+
+        if (! empty($extra)) {
+            $query['$set'] = $extra;
+        }
+
+        // Protect
+        $this->where(function ($query) use ($column) {
+            $query->where($column, 'exists', true);
+
+            $query->whereNotNull($column);
+        });
+
+        $options = $this->inheritConnectionOptions($options);
+
+        return $this->performUpdate($query, $options);
+    }
+
+    /**
+     * Divide a column's value by a given amount.
+     *
+     * @param  string    $column
+     * @param  float|int $amount
+     *
+     * @return int
+     */
+    public function divide($column, $amount, array $extra = [], array $options = [])
+    {
+        return $this->multiply($column, 1 / $amount, $extra, $options);
+    }
+
     /** @inheritdoc */
+    #[Override]
     public function pluck($column, $key = null)
     {
         $results = $this->get($key === null ? [$column] : [$column, $key]);
@@ -934,6 +1013,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function delete($id = null)
     {
         // If an ID is passed to the method, we will set the where clause to check
@@ -965,6 +1045,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function from($collection, $as = null)
     {
         if ($collection) {
@@ -997,7 +1078,14 @@ class Builder extends BaseBuilder
         return $this->pluck($column, $key);
     }
 
-    /** @inheritdoc */
+    /**
+     * @param (Closure():T)|Expression|null $value
+     *
+     * @return ($value is Closure ? T : ($value is null ? Collection : Expression))
+     *
+     * @template T
+     */
+    #[Override]
     public function raw($value = null)
     {
         // Execute the closure on the mongodb collection
@@ -1100,11 +1188,13 @@ class Builder extends BaseBuilder
      *
      * @inheritdoc
      */
+    #[Override]
     public function newQuery()
     {
         return new static($this->connection, $this->grammar, $this->processor);
     }
 
+    #[Override]
     public function runPaginationCountQuery($columns = ['*'])
     {
         if ($this->distinct) {
@@ -1187,6 +1277,7 @@ class Builder extends BaseBuilder
      *
      * @return $this
      */
+    #[Override]
     public function where($column, $operator = null, $value = null, $boolean = 'and')
     {
         $params = func_get_args();
@@ -1705,6 +1796,7 @@ class Builder extends BaseBuilder
     }
 
     /** @inheritdoc */
+    #[Override]
     public function __call($method, $parameters)
     {
         if ($method === 'unset') {
@@ -1715,99 +1807,115 @@ class Builder extends BaseBuilder
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function toSql()
     {
         throw new BadMethodCallException('This method is not supported by MongoDB. Try "toMql()" instead.');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function toRawSql()
     {
         throw new BadMethodCallException('This method is not supported by MongoDB. Try "toMql()" instead.');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function whereColumn($first, $operator = null, $second = null, $boolean = 'and')
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function whereFullText($columns, $value, array $options = [], $boolean = 'and')
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function groupByRaw($sql, array $bindings = [])
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function orderByRaw($sql, $bindings = [])
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function unionAll($query)
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function union($query, $all = false)
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function having($column, $operator = null, $value = null, $boolean = 'and')
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function havingRaw($sql, array $bindings = [], $boolean = 'and')
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function havingBetween($column, iterable $values, $boolean = 'and', $not = false)
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function whereIntegerInRaw($column, $values, $boolean = 'and', $not = false)
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function orWhereIntegerInRaw($column, $values)
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function whereIntegerNotInRaw($column, $values, $boolean = 'and')
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
     /** @internal This method is not supported by MongoDB. */
+    #[Override]
     public function orWhereIntegerNotInRaw($column, $values, $boolean = 'and')
     {
         throw new BadMethodCallException('This method is not supported by MongoDB');
     }
 
-    private function aliasIdForQuery(array $values): array
+    private function aliasIdForQuery(array $values, bool $root = true): array
     {
         return $values;
-        if (array_key_exists('id', $values)) {
+
+        if (array_key_exists('id', $values) && ($root || $this->connection->getRenameEmbeddedIdField())) {
             if (array_key_exists('_id', $values) && $values['id'] !== $values['_id']) {
                 throw new InvalidArgumentException('Cannot have both "id" and "_id" fields.');
             }
@@ -1834,20 +1942,20 @@ class Builder extends BaseBuilder
             }
 
             // ".id" subfield are alias for "._id"
-            if (str_ends_with($key, '.id')) {
+            if (str_ends_with($key, '.id') && $this->connection->getRenameEmbeddedIdField()) {
                 $newkey = substr($key, 0, -3) . '._id';
                 if (array_key_exists($newkey, $values) && $value !== $values[$newkey]) {
                     throw new InvalidArgumentException(sprintf('Cannot have both "%s" and "%s" fields.', $key, $newkey));
                 }
 
-                $values[substr($key, 0, -3) . '._id'] = $value;
+                $values[$newkey] = $value;
                 unset($values[$key]);
             }
         }
 
         foreach ($values as &$value) {
             if (is_array($value)) {
-                $value = $this->aliasIdForQuery($value);
+                $value = $this->aliasIdForQuery($value, false);
             } elseif ($value instanceof DateTimeInterface) {
                 $value = new UTCDateTime($value);
             }
@@ -1865,12 +1973,15 @@ class Builder extends BaseBuilder
      *
      * @template T of array|object
      */
-    public function aliasIdForResult(array|object $values): array|object
+    public function aliasIdForResult(array|object $values, bool $root = true): array|object
     {
         // just ignore this completely
         return $values;
         if (is_array($values)) {
-            if (array_key_exists('_id', $values) && ! array_key_exists('id', $values)) {
+            if (
+                array_key_exists('_id', $values) && ! array_key_exists('id', $values)
+                && ($root || $this->connection->getRenameEmbeddedIdField())
+            ) {
                 $values['id'] = $values['_id'];
 //                unset($values['_id']);
             }
@@ -1880,13 +1991,16 @@ class Builder extends BaseBuilder
                     $values[$key] = Date::instance($value->toDateTime())
                         ->setTimezone(new DateTimeZone(date_default_timezone_get()));
                 } elseif (is_array($value) || is_object($value)) {
-                    $values[$key] = $this->aliasIdForResult($value);
+                    $values[$key] = $this->aliasIdForResult($value, false);
                 }
             }
         }
 
         if ($values instanceof stdClass) {
-            if (property_exists($values, '_id') && ! property_exists($values, 'id')) {
+            if (
+                property_exists($values, '_id') && ! property_exists($values, 'id')
+                && ($root || $this->connection->getRenameEmbeddedIdField())
+            ) {
                 $values->id = $values->_id;
 //                unset($values->_id);
             }
@@ -1896,7 +2010,7 @@ class Builder extends BaseBuilder
                     $values->{$key} = Date::instance($value->toDateTime())
                         ->setTimezone(new DateTimeZone(date_default_timezone_get()));
                 } elseif (is_array($value) || is_object($value)) {
-                    $values->{$key} = $this->aliasIdForResult($value);
+                    $values->{$key} = $this->aliasIdForResult($value, false);
                 }
             }
         }

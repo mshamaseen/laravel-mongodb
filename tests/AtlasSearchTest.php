@@ -19,17 +19,22 @@ use function mt_getrandmax;
 use function rand;
 use function range;
 use function srand;
-use function usleep;
 use function usort;
 
 #[Group('atlas-search')]
 class AtlasSearchTest extends TestCase
 {
+    use AtlasSearchIndexManagement;
+
     private array $vectors;
 
     public function setUp(): void
     {
         parent::setUp();
+
+        $collection = $this->getConnection('mongodb')->getCollection('books');
+        assert($collection instanceof MongoDBCollection);
+        $collection->drop();
 
         Book::insert($this->addVector([
             ['title' => 'Introduction to Algorithms'],
@@ -54,10 +59,9 @@ class AtlasSearchTest extends TestCase
             ['title' => 'Pattern Recognition and Machine Learning'],
         ]));
 
-        $collection = $this->getConnection('mongodb')->getCollection('books');
-        assert($collection instanceof MongoDBCollection);
-
         try {
+            $this->waitForSearchIndexesDropped($collection);
+
             $collection->createSearchIndex([
                 'mappings' => [
                     'fields' => [
@@ -89,16 +93,7 @@ class AtlasSearchTest extends TestCase
             throw $e;
         }
 
-        // Wait for the index to be ready
-        do {
-            $ready = true;
-            usleep(10_000);
-            foreach ($collection->listSearchIndexes() as $index) {
-                if ($index['status'] !== 'READY') {
-                    $ready = false;
-                }
-            }
-        } while (! $ready);
+        $this->waitForSearchIndexesReady($collection);
     }
 
     public function tearDown(): void
