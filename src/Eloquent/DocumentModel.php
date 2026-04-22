@@ -209,9 +209,10 @@ trait DocumentModel
 
         $returnType = (new ReflectionMethod($this, $method))->getReturnType();
 
-        return $returnType && static::$embeddedCache[get_class($this)][$key] =
-                $returnType instanceof ReflectionNamedType &&
-                $returnType->getName() === EmbedsOne::class || $returnType->getName() === EmbedsMany::class;
+        static::$embeddedCache[get_class($this)][$key] = $returnType instanceof ReflectionNamedType &&
+            ($returnType->getName() === EmbedsOne::class || $returnType->getName() === EmbedsMany::class);
+
+        return static::$embeddedCache[get_class($this)][$key];
     }
 
     /** @inheritdoc */
