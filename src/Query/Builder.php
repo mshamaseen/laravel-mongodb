@@ -33,6 +33,7 @@ use MongoDB\Laravel\Exceptions\DocumentValidationException;
 use MongoDB\Laravel\Connection;
 use Override;
 use RuntimeException;
+use SortDirection;
 use stdClass;
 use TypeError;
 use function array_fill_keys;
@@ -661,13 +662,20 @@ class Builder extends BaseBuilder
     }
 
     /**
-     * @param int|string|array $direction
+     * @param SortDirection|int|string|array $direction
      *
      * @inheritdoc
      */
     #[Override]
-    public function orderBy($column, $direction = 'asc')
+    public function orderBy($column, $direction = SortDirection::Ascending)
     {
+        if ($direction instanceof SortDirection) {
+            $direction = match ($direction) {
+                SortDirection::Ascending => 1,
+                SortDirection::Descending => -1,
+            };
+        }
+
         if (is_string($direction)) {
             $direction = match ($direction) {
                 'asc', 'ASC' => 1,
